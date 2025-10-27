@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace GitCore;
@@ -151,6 +152,56 @@ public static class GitObjects
             {
                 // For now, we'll skip subdirectories
                 // In a full implementation, we would recursively process them
+            }
+        }
+
+        return files;
+    }
+
+    public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetAllFilesFromTree(
+        string treeSHA1,
+        IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1,
+        IReadOnlyList<string>? pathPrefix = null)
+    {
+        var files = new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
+            comparer: Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
+
+        pathPrefix ??= Array.Empty<string>();
+
+        if (!objectsBySHA1.TryGetValue(treeSHA1, out var treeObject))
+        {
+            throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
+        }
+
+        if (treeObject.Type != PackFile.ObjectType.Tree)
+        {
+            throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
+        }
+
+        var tree = ParseTree(treeObject.Data);
+
+        foreach (var entry in tree.Entries)
+        {
+            var filePath = pathPrefix.Concat([entry.Name]).ToArray();
+
+            if (entry.Mode.StartsWith("100")) // Regular file
+            {
+                if (objectsBySHA1.TryGetValue(entry.SHA1, out var blobObject))
+                {
+                    if (blobObject.Type == PackFile.ObjectType.Blob)
+                    {
+                        files[filePath] = GetBlobContent(blobObject.Data);
+                    }
+                }
+            }
+            else if (entry.Mode == "40000") // Directory
+            {
+                // Recursively process subdirectories
+                var subFiles = GetAllFilesFromTree(entry.SHA1, objectsBySHA1, filePath);
+                foreach (var (subPath, content) in subFiles)
+                {
+                    files[subPath] = content;
+                }
             }
         }
 
