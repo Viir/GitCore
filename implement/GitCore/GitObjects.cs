@@ -207,6 +207,54 @@ public static class GitObjects
         return files;
     }
 
+    /// <summary>
+    /// Gets files from a specific subdirectory within a tree.
+    /// </summary>
+    /// <param name="treeSHA1">The SHA1 of the root tree</param>
+    /// <param name="subdirectoryPath">Path components to the subdirectory (e.g., ["implement", "GitCore"])</param>
+    /// <param name="getObjectBySHA1">Function to retrieve objects by SHA1</param>
+    /// <returns>Dictionary of file paths (relative to subdirectory) to their contents</returns>
+    public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetFilesFromSubdirectory(
+        string treeSHA1,
+        IReadOnlyList<string> subdirectoryPath,
+        Func<string, PackFile.PackObject?> getObjectBySHA1)
+    {
+        // Navigate to the subdirectory by traversing the tree
+        var currentTreeSHA1 = treeSHA1;
+
+        foreach (var pathComponent in subdirectoryPath)
+        {
+            var treeObject = getObjectBySHA1(currentTreeSHA1);
+            if (treeObject is null)
+            {
+                throw new InvalidOperationException($"Tree {currentTreeSHA1} not found");
+            }
+
+            if (treeObject.Type != PackFile.ObjectType.Tree)
+            {
+                throw new InvalidOperationException($"Object {currentTreeSHA1} is not a tree");
+            }
+
+            var tree = ParseTree(treeObject.Data);
+            var entry = tree.Entries.FirstOrDefault(e => e.Name == pathComponent);
+
+            if (entry is null)
+            {
+                throw new InvalidOperationException($"Path component '{pathComponent}' not found in tree");
+            }
+
+            if (entry.Mode != "40000")
+            {
+                throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
+            }
+
+            currentTreeSHA1 = entry.SHA1;
+        }
+
+        // Now get all files from the subdirectory tree
+        return GetAllFilesFromTree(currentTreeSHA1, getObjectBySHA1, pathPrefix: Array.Empty<string>());
+    }
+
     public static ReadOnlyMemory<byte> GetFileFromCommit(
         string commitSHA1,
         string fileName,
