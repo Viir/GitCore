@@ -61,10 +61,9 @@ public class LoadFromGitHubTests
         treeContents.Should().NotBeNull("Tree should be loaded");
         treeContents.Count.Should().BeGreaterThan(0, "Tree should contain files");
 
-        // Verify that README.md exists
-        var hasReadme = treeContents.Keys.Any(path => 
-            path.Count == 1 && path[0] == "README.md");
-        hasReadme.Should().BeTrue("README.md should exist at the root");
+        // Verify that README.md exists using the same pattern as other tests
+        var readmeFile = treeContents[["README.md"]];
+        readmeFile.Length.Should().BeGreaterThan(0, "README.md should exist and have content");
     }
 
     [Fact]
