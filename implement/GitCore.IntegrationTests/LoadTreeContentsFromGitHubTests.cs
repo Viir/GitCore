@@ -152,6 +152,67 @@ public class LoadFromGitHubTests
             "Common/EnumerableExtensions.cs should have the expected content");
     }
 
+    [Fact]
+    public async Task Load_eve_online_bot_subdirectory_with_data_transfer_profiling()
+    {
+        // Create a custom HttpClient with a handler to track data transfer
+        var dataTrackingHandler = new DataTrackingHandler(new System.Net.Http.SocketsHttpHandler());
+        using var httpClient = new System.Net.Http.HttpClient(dataTrackingHandler);
+
+        // Target: Load the EVE Online combat anomaly bot subdirectory
+        var repositoryUrl = "https://github.com/Viir/bots.git";
+        var commitSha = "c42f50d6b4dc4640c62b1c3ecade7187eaabf888";
+        var subdirectoryPath = new[] { "implement", "applications", "eve-online", "eve-online-combat-anomaly-bot" };
+
+        // Load the subdirectory contents
+        var subdirectoryContents = await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
+            repositoryUrl, commitSha, subdirectoryPath, httpClient);
+
+        // Verify that the subdirectory was loaded successfully
+        subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
+        subdirectoryContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
+
+        // Verify that we have the expected files
+        var hasElmJson = subdirectoryContents.Keys.Any(path => path.Count == 1 && path[0] == "elm.json");
+        hasElmJson.Should().BeTrue("The subdirectory should contain an elm.json file");
+
+        // Verify we have the main bot file
+        var hasBotElm = subdirectoryContents.Keys.Any(path => path.Count == 1 && path[0] == "Bot.elm");
+        hasBotElm.Should().BeTrue("The subdirectory should contain a Bot.elm file");
+
+        // Profile data transfer
+        var totalBytesReceived = dataTrackingHandler.TotalBytesReceived;
+        var totalBytesSent = dataTrackingHandler.TotalBytesSent;
+        var requestCount = dataTrackingHandler.RequestCount;
+
+        // Log profiling information for debugging
+        System.Console.WriteLine($"Data Transfer Profile:");
+        System.Console.WriteLine($"  Total Requests: {requestCount}");
+        System.Console.WriteLine($"  Total Bytes Sent: {totalBytesSent:N0} bytes");
+        System.Console.WriteLine($"  Total Bytes Received: {totalBytesReceived:N0} bytes");
+        System.Console.WriteLine($"  Total Data Transfer: {totalBytesSent + totalBytesReceived:N0} bytes");
+
+        // Assert bounds on data transfer
+        // The entire bots repository is large, but we're only requesting a subdirectory
+        // We expect the data transfer to be optimized by using Git's smart HTTP protocol
+        // which should only transfer the objects needed for this subdirectory
+        
+        // Based on the Git protocol, we expect:
+        // 1. A request to info/refs (small, ~few KB)
+        // 2. A request to git-upload-pack with the pack file response
+        // The pack file should contain only the commit, trees, and blobs for the subdirectory
+        
+        requestCount.Should().BeLessThan(10, "Should not make excessive HTTP requests");
+        
+        // Set a reasonable upper bound for data transfer
+        // For a subdirectory with a few files, we expect this to be much less than downloading
+        // the entire repository. Setting a bound of 10 MB as a reasonable upper limit.
+        // This should be well below the full repository size while allowing for the necessary objects.
+        var maxExpectedBytes = 10 * 1024 * 1024; // 10 MB
+        totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
+            $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");
+    }
+
     // Helper class for tracking HTTP requests
     private class RequestCountingHandler(System.Net.Http.HttpMessageHandler innerHandler)
         : System.Net.Http.DelegatingHandler(innerHandler)
@@ -164,6 +225,50 @@ public class LoadFromGitHubTests
         {
             RequestCount++;
             return await base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    // Helper class for tracking data transfer
+    private class DataTrackingHandler(System.Net.Http.HttpMessageHandler innerHandler)
+        : System.Net.Http.DelegatingHandler(innerHandler)
+    {
+        public int RequestCount { get; private set; }
+        public long TotalBytesSent { get; private set; }
+        public long TotalBytesReceived { get; private set; }
+
+        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            RequestCount++;
+
+            // Track request size
+            if (request.Content != null)
+            {
+                var requestBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+                TotalBytesSent += requestBytes.Length;
+            }
+
+            // Send the request
+            var response = await base.SendAsync(request, cancellationToken);
+
+            // Track response size
+            if (response.Content != null)
+            {
+                var responseBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                TotalBytesReceived += responseBytes.Length;
+                
+                // Re-wrap the content so it can be read again by the caller
+                response.Content = new System.Net.Http.ByteArrayContent(responseBytes);
+                
+                // Preserve the original content headers
+                foreach (var header in response.Content.Headers)
+                {
+                    response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
+            }
+
+            return response;
         }
     }
 }
