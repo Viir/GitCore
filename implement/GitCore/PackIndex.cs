@@ -2,6 +2,7 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
+using ICSharpCode.SharpZipLib.Zip.Compression;
 
 namespace GitCore;
 
@@ -226,8 +227,9 @@ public static class PackIndex
         // RIDX format:
         // - Header: 'RIDX' (4 bytes) + version (4 bytes) + hash id (4 bytes)
         // - Index array: N entries of 4 bytes each (pack position -> index position)
-        // - Checksum: 20 bytes (pack checksum)
-        var totalSize = 12 + (4 * objectCount) + 20;
+        // - Pack checksum: 20 bytes
+        // - Rev checksum: 20 bytes (SHA-1 of everything before this point)
+        var totalSize = 12 + (4 * objectCount) + 20 + 20;
         var buffer = new byte[totalSize];
         var span = buffer.AsSpan();
 
@@ -257,77 +259,51 @@ public static class PackIndex
         }
 
         // Write pack checksum
-        var checksumOffset = indexOffset + objectCount * 4;
-        packChecksum.Span.CopyTo(span.Slice(checksumOffset, 20));
+        var packChecksumOffset = indexOffset + objectCount * 4;
+        packChecksum.Span.CopyTo(span.Slice(packChecksumOffset, 20));
+
+        // Calculate and write rev checksum (SHA-1 of everything before this point)
+        var revChecksumOffset = packChecksumOffset + 20;
+        var dataToHash = span[..revChecksumOffset];
+        var revChecksum = System.Security.Cryptography.SHA1.HashData(dataToHash);
+        revChecksum.CopyTo(span.Slice(revChecksumOffset, 20));
 
         return buffer;
     }
 
     private static int FindCompressedLength(ReadOnlySpan<byte> packData, int offset, int expectedDecompressedSize)
     {
-        // Binary search for the minimum compressed length that allows full decompression
-        var minLength = 1;
-        var maxLength = packData.Length - offset;
-        var workingLength = -1;
+        // Use SharpZipLib's Inflater which tracks bytes consumed via TotalIn property
+        var inflater = new Inflater(false); // false = expect zlib header
         
-        // First, find if max length works at all
-        if (!TryDecompress(packData, offset, maxLength, expectedDecompressedSize))
-        {
-            throw new InvalidOperationException($"Cannot decompress object at offset {offset} even with full remaining data");
-        }
-        
-        // Binary search for minimum working length
-        while (minLength <= maxLength)
-        {
-            var mid = minLength + (maxLength - minLength) / 2;
-            
-            if (TryDecompress(packData, offset, mid, expectedDecompressedSize))
-            {
-                // This length works, try smaller
-                workingLength = mid;
-                maxLength = mid - 1;
-            }
-            else
-            {
-                // This length doesn't work, need longer
-                minLength = mid + 1;
-            }
-        }
-        
-        if (workingLength == -1)
-        {
-            throw new InvalidOperationException($"Could not find compressed length for object at offset {offset}");
-        }
-        
-        return workingLength;
-    }
-    
-    private static bool TryDecompress(ReadOnlySpan<byte> packData, int offset, int compressedLength, int expectedSize)
-    {
         try
         {
-            var testData = packData.Slice(offset, compressedLength).ToArray();
-            using var memStream = new System.IO.MemoryStream(testData);
-            using var zlibStream = new System.IO.Compression.ZLibStream(memStream, System.IO.Compression.CompressionMode.Decompress);
+            // Provide all available data to the inflater
+            var availableData = packData[offset..].ToArray();
+            inflater.SetInput(availableData);
             
-            var buffer = new byte[expectedSize];
-            var totalRead = 0;
+            // Decompress to a buffer - use a slightly larger buffer to ensure the inflater
+            // reads the entire compressed stream and sets IsFinished
+            var outputBuffer = new byte[expectedDecompressedSize + 1];
+            var decompressedBytes = inflater.Inflate(outputBuffer);
             
-            while (totalRead < expectedSize)
+            if (decompressedBytes != expectedDecompressedSize)
             {
-                var read = zlibStream.Read(buffer, totalRead, expectedSize - totalRead);
-                if (read == 0)
-                {
-                    return false; // Couldn't read enough
-                }
-                totalRead += read;
+                throw new InvalidOperationException(
+                    $"Decompression produced {decompressedBytes} bytes but expected {expectedDecompressedSize} bytes at offset {offset}");
             }
             
-            return totalRead == expectedSize;
+            // TotalIn tells us exactly how many bytes were consumed from the input
+            // This should now be accurate since the inflater has finished the stream
+            return (int)inflater.TotalIn;
         }
-        catch
+        catch (Exception ex)
         {
-            return false;
+            throw new InvalidOperationException($"Could not decompress object at offset {offset}: {ex.Message}", ex);
+        }
+        finally
+        {
+            inflater.Reset();
         }
     }
 
