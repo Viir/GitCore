@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -13,8 +11,8 @@ namespace GitCore;
 /// </summary>
 public static class GitSmartHttp
 {
-    private static readonly HttpClient HttpClient = new();
-    
+    private static readonly HttpClient s_httpClient = new();
+
     // Git protocol capabilities we request when fetching pack files
     private const string GitProtocolCapabilities = "multi_ack_detailed side-band-64k ofs-delta";
 
@@ -30,7 +28,7 @@ public static class GitSmartHttp
         var scheme = uri.Scheme;
         var pathParts = uri.AbsolutePath.Trim('/').Split('/');
 
-        if (host == "github.com" && pathParts.Length >= 4 && pathParts[2] == "tree")
+        if (host is "github.com" && pathParts.Length >= 4 && pathParts[2] is "tree")
         {
             // Format: github.com/owner/repo/tree/commit-sha
             return (
@@ -40,7 +38,7 @@ public static class GitSmartHttp
                 pathParts[3]
             );
         }
-        else if (host == "gitlab.com" && pathParts.Length >= 5 && pathParts[2] == "-" && pathParts[3] == "tree")
+        else if (host is "gitlab.com" && pathParts.Length >= 5 && pathParts[2] is "-" && pathParts[3] is "tree")
         {
             // Format: gitlab.com/owner/repo/-/tree/commit-sha
             return (
@@ -74,24 +72,24 @@ public static class GitSmartHttp
 
         // Step 1: Discover refs (optional but following protocol)
         var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
-        
+
         using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
-        using var refsResponse = await HttpClient.SendAsync(refsRequest);
+        using var refsResponse = await s_httpClient.SendAsync(refsRequest);
         refsResponse.EnsureSuccessStatusCode();
 
         // Step 2: Request the pack file with the specific commit
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
-        
+
         // Build the request body according to Git protocol
         var requestBody = BuildUploadPackRequest(commitSha);
-        
+
         using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
         {
             Content = new ByteArrayContent(requestBody)
         };
         packRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
 
-        using var packResponse = await HttpClient.SendAsync(packRequest);
+        using var packResponse = await s_httpClient.SendAsync(packRequest);
         packResponse.EnsureSuccessStatusCode();
 
         var responseData = await packResponse.Content.ReadAsByteArrayAsync();
@@ -103,23 +101,23 @@ public static class GitSmartHttp
     private static byte[] BuildUploadPackRequest(string commitSha)
     {
         using var ms = new MemoryStream();
-        
+
         // Want line: want <sha> <capabilities>
         var wantLine = $"want {commitSha} {GitProtocolCapabilities}\n";
         WritePktLine(ms, wantLine);
-        
+
         // Flush packet
         WritePktLine(ms, null);
-        
+
         // Done line
         WritePktLine(ms, "done\n");
-        
+
         return ms.ToArray();
     }
 
     private static void WritePktLine(Stream stream, string? line)
     {
-        if (line == null)
+        if (line is null)
         {
             // Flush packet: "0000"
             stream.Write("0000"u8);
@@ -138,46 +136,46 @@ public static class GitSmartHttp
     {
         // The response is in pkt-line format with side-band
         // Side-band byte: 0x01 = pack data, 0x02 = progress, 0x03 = error
-        
+
         using var output = new MemoryStream();
         var offset = 0;
-        
+
         while (offset < responseData.Length)
         {
             // Read pkt-line length (4 hex chars)
             if (offset + 4 > responseData.Length)
                 break;
-                
+
             var lengthHex = Encoding.UTF8.GetString(responseData, offset, 4);
             offset += 4;
-            
-            if (lengthHex == "0000")
+
+            if (lengthHex is "0000")
             {
                 // Flush packet, continue
                 continue;
             }
-            
+
             var length = Convert.ToInt32(lengthHex, 16);
             var dataLength = length - 4; // Subtract the 4-byte length prefix
-            
+
             if (dataLength <= 0 || offset + dataLength > responseData.Length)
                 break;
-            
+
             // First byte is the side-band indicator
             var sideBand = responseData[offset];
             offset++;
             dataLength--;
-            
-            if (sideBand == 0x01)
+
+            if (sideBand is 0x01)
             {
                 // Pack data
                 output.Write(responseData, offset, dataLength);
             }
             // Ignore progress (0x02) and error (0x03) messages for now
-            
+
             offset += dataLength;
         }
-        
+
         return output.ToArray();
     }
 }

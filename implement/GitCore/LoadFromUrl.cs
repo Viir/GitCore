@@ -39,7 +39,7 @@ public class LoadFromUrl
             throw new InvalidOperationException($"Commit {commitSha} not found in pack file");
         }
 
-        if (commitObject.Type != PackFile.ObjectType.Commit)
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
         {
             throw new InvalidOperationException($"Object {commitSha} is not a commit");
         }
