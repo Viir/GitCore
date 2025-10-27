@@ -129,7 +129,7 @@ public static class GitObjects
             throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
         }
 
-        if (treeObject.Type != PackFile.ObjectType.Tree)
+        if (treeObject.Type is not PackFile.ObjectType.Tree)
         {
             throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
         }
@@ -142,13 +142,13 @@ public static class GitObjects
             {
                 if (objectsBySHA1.TryGetValue(entry.SHA1, out var blobObject))
                 {
-                    if (blobObject.Type == PackFile.ObjectType.Blob)
+                    if (blobObject.Type is PackFile.ObjectType.Blob)
                     {
                         files[entry.Name] = GetBlobContent(blobObject.Data);
                     }
                 }
             }
-            else if (entry.Mode == "40000") // Directory
+            else if (entry.Mode is "40000") // Directory
             {
                 // For now, we'll skip subdirectories
                 // In a full implementation, we would recursively process them
@@ -166,7 +166,7 @@ public static class GitObjects
         var files = new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
             comparer: Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
 
-        pathPrefix ??= Array.Empty<string>();
+        pathPrefix ??= [];
 
         var treeObject = getObjectBySHA1(treeSHA1);
         if (treeObject is null)
@@ -174,7 +174,7 @@ public static class GitObjects
             throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
         }
 
-        if (treeObject.Type != PackFile.ObjectType.Tree)
+        if (treeObject.Type is not PackFile.ObjectType.Tree)
         {
             throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
         }
@@ -188,12 +188,12 @@ public static class GitObjects
             if (entry.Mode.StartsWith("100")) // Regular file
             {
                 var blobObject = getObjectBySHA1(entry.SHA1);
-                if (blobObject is not null && blobObject.Type == PackFile.ObjectType.Blob)
+                if (blobObject is not null && blobObject.Type is PackFile.ObjectType.Blob)
                 {
                     files[filePath] = GetBlobContent(blobObject.Data);
                 }
             }
-            else if (entry.Mode == "40000") // Directory
+            else if (entry.Mode is "40000") // Directory
             {
                 // Recursively process subdirectories
                 var subFiles = GetAllFilesFromTree(entry.SHA1, getObjectBySHA1, filePath);
@@ -207,6 +207,54 @@ public static class GitObjects
         return files;
     }
 
+    /// <summary>
+    /// Gets files from a specific subdirectory within a tree.
+    /// </summary>
+    /// <param name="treeSHA1">The SHA1 of the root tree</param>
+    /// <param name="subdirectoryPath">Path components to the subdirectory (e.g., ["implement", "GitCore"])</param>
+    /// <param name="getObjectBySHA1">Function to retrieve objects by SHA1</param>
+    /// <returns>Dictionary of file paths (relative to subdirectory) to their contents</returns>
+    public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetFilesFromSubdirectory(
+        string treeSHA1,
+        IReadOnlyList<string> subdirectoryPath,
+        Func<string, PackFile.PackObject?> getObjectBySHA1)
+    {
+        // Navigate to the subdirectory by traversing the tree
+        var currentTreeSHA1 = treeSHA1;
+
+        foreach (var pathComponent in subdirectoryPath)
+        {
+            var treeObject = getObjectBySHA1(currentTreeSHA1);
+            if (treeObject is null)
+            {
+                throw new InvalidOperationException($"Tree {currentTreeSHA1} not found");
+            }
+
+            if (treeObject.Type is not PackFile.ObjectType.Tree)
+            {
+                throw new InvalidOperationException($"Object {currentTreeSHA1} is not a tree");
+            }
+
+            var tree = ParseTree(treeObject.Data);
+            var entry = tree.Entries.FirstOrDefault(e => e.Name == pathComponent);
+
+            if (entry is null)
+            {
+                throw new InvalidOperationException($"Path component '{pathComponent}' not found in tree");
+            }
+
+            if (entry.Mode is not "40000")
+            {
+                throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
+            }
+
+            currentTreeSHA1 = entry.SHA1;
+        }
+
+        // Now get all files from the subdirectory tree
+        return GetAllFilesFromTree(currentTreeSHA1, getObjectBySHA1, pathPrefix: []);
+    }
+
     public static ReadOnlyMemory<byte> GetFileFromCommit(
         string commitSHA1,
         string fileName,
@@ -217,7 +265,7 @@ public static class GitObjects
             throw new InvalidOperationException($"Commit {commitSHA1} not found in pack file");
         }
 
-        if (commitObject.Type != PackFile.ObjectType.Commit)
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
         {
             throw new InvalidOperationException($"Object {commitSHA1} is not a commit");
         }
