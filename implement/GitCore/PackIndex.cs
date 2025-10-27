@@ -139,7 +139,7 @@ public static class PackIndex
         // We'll track both regular objects and deltas
         var regularObjects = new List<(long Offset, string SHA1, uint CRC32)>();
         var deltaObjects = new List<(long Offset, PackFile.ObjectType Type, long BaseOffset, string? BaseSHA1, byte[] DeltaData, uint CRC32)>();
-        
+
         var offset = 12; // After header
         var span = packDataWithoutChecksum.Span;
 
@@ -168,7 +168,7 @@ public static class PackIndex
                 var negativeOffset = 0L;
                 currentByte = span[offset++];
                 negativeOffset = currentByte & 0x7F;
-                
+
                 while ((currentByte & 0x80) is not 0)
                 {
                     currentByte = span[offset++];
@@ -181,7 +181,7 @@ public static class PackIndex
                 var deltaCompressedLength = FindCompressedLength(span, offset, (int)size);
                 var compressedData = span.Slice(offset, deltaCompressedLength);
                 var deltaData = PackFile.DecompressZlib(compressedData, (int)size);
-                
+
                 var packedSize = (offset - startOffset) + deltaCompressedLength;
                 var packedData = span.Slice(startOffset, packedSize);
                 var crc32 = CalculateCRC32(packedData);
@@ -200,7 +200,7 @@ public static class PackIndex
                 var refDeltaCompressedLength = FindCompressedLength(span, offset, (int)size);
                 var compressedData = span.Slice(offset, refDeltaCompressedLength);
                 var deltaData = PackFile.DecompressZlib(compressedData, (int)size);
-                
+
                 var packedSize = (offset - startOffset) + refDeltaCompressedLength;
                 var packedData = span.Slice(startOffset, packedSize);
                 var crc32 = CalculateCRC32(packedData);

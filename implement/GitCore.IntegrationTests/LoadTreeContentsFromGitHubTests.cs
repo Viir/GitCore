@@ -35,7 +35,7 @@ public class LoadFromGitHubTests
 
         // Assert that there's at least one file in the "implement" subdirectory
         var hasImplementSubdir = treeContents.Keys
-            .Any(path => path.Count >= 2 && path[0] == "implement");
+            .Any(path => path.Count >= 2 && path[0] is "implement");
 
         hasImplementSubdir.Should().BeTrue("There should be files in the 'implement' subdirectory");
     }

@@ -131,7 +131,7 @@ public static class PackFile
                 var negativeOffset = 0L;
                 currentByte = span[pos++];
                 negativeOffset = currentByte & 0x7F;
-                
+
                 while ((currentByte & 0x80) != 0)
                 {
                     currentByte = span[pos++];
