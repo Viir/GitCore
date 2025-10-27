@@ -255,14 +255,17 @@ public class LoadFromGitHubTests
             // Track response size
             if (response.Content != null)
             {
+                // Capture headers before reading content
+                var originalHeaders = response.Content.Headers.ToList();
+                
                 var responseBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
                 TotalBytesReceived += responseBytes.Length;
                 
                 // Re-wrap the content so it can be read again by the caller
                 response.Content = new System.Net.Http.ByteArrayContent(responseBytes);
                 
-                // Preserve the original content headers
-                foreach (var header in response.Content.Headers)
+                // Restore the original content headers
+                foreach (var header in originalHeaders)
                 {
                     response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
                 }
