@@ -52,22 +52,6 @@ public class LoadFromUrl
 
     private static ReadOnlyMemory<byte> BuildPackIndex(ReadOnlyMemory<byte> packFileData)
     {
-        // TEMPORARY: Use test data index for the specific commit in the test
-        // The pack file from HTTP is identical to the test data pack file
-        
-        // Try to find the test data directory (navigate up from bin/Debug/net10.0)
-        var testIndexPath = System.IO.Path.Combine(
-            AppContext.BaseDirectory,
-            "../../../..",
-            "TestData/2025-10-27-clone/files-after-git-clone/objects/pack/pack-f0af0a07967292ae02df043ff4169bee06f6c143.idx");
-        
-        testIndexPath = System.IO.Path.GetFullPath(testIndexPath);
-        
-        if (System.IO.File.Exists(testIndexPath))
-        {
-            return System.IO.File.ReadAllBytes(testIndexPath);
-        }
-        
         // Build a Git pack index v2 file from a pack file
         var objects = ScanPackFileForIndex(packFileData);
         
@@ -135,6 +119,7 @@ public class LoadFromUrl
         var span = packFileData.Span;
         var objectCount = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(span.Slice(8, 4));
         
+        Console.WriteLine($"Scanning pack file with {objectCount} objects");
         
         var objects = new List<(long offset, string sha1)>();
         var offset = 12;
@@ -144,6 +129,7 @@ public class LoadFromUrl
         {
             var objectOffset = offset;
             
+            Console.WriteLine($"Object {i + 1} at offset {offset}");
             
             // Read object header
             var currentByte = span[offset++];
@@ -158,11 +144,13 @@ public class LoadFromUrl
                 shift += 7;
             }
             
+            Console.WriteLine($"  Type: {objectType}, Size: {size}");
             
             // Find compressed data size by trial decompression
             var compressedStart = offset;
             var compressedSize = FindCompressedSize(span[compressedStart..dataWithoutChecksum.Length], (int)size);
             
+            Console.WriteLine($"  Compressed size: {compressedSize}");
             
             // Decompress to get SHA1
             var decompressed = DecompressZlib(span[compressedStart..(compressedStart + compressedSize)], (int)size);
@@ -175,6 +163,7 @@ public class LoadFromUrl
             var sha1 = System.Security.Cryptography.SHA1.HashData(dataForHash);
             var sha1Hex = Convert.ToHexStringLower(sha1);
             
+            Console.WriteLine($"  SHA1: {sha1Hex}");
             
             objects.Add((objectOffset, sha1Hex));
             
