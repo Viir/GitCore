@@ -6,13 +6,35 @@ using ICSharpCode.SharpZipLib.Zip.Compression;
 
 namespace GitCore;
 
+/// <summary>
+/// Utilities for reading and generating Git pack index files and reverse index files.
+/// </summary>
 public static class PackIndex
 {
+    /// <summary>
+    /// Represents a single entry in a pack index file.
+    /// </summary>
+    /// <param name="Offset">The byte offset of the packed object within the pack file.</param>
+    /// <param name="SHA1">The object identifier as a40-character lowercase hexadecimal SHA-1 string.</param>
+    /// <param name="CRC32">The CRC-32 checksum of the packed object data as stored in the pack.</param>
     public record IndexEntry(
         long Offset,
         string SHA1,
         uint CRC32);
 
+    /// <summary>
+    /// Parses a Git pack index version2 (idx) file from the provided data.
+    /// </summary>
+    /// <param name="indexData">The bytes of the idx file.</param>
+    /// <returns>
+    /// A read-only list of <see cref="IndexEntry"/> values, sorted by increasing <see cref="IndexEntry.Offset"/>.
+    /// </returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the signature is invalid or the version is not2.
+    /// </exception>
+    /// <exception cref="NotImplementedException">
+    /// Thrown when the index references64-bit object offsets which are not supported by this parser yet.
+    /// </exception>
     public static IReadOnlyList<IndexEntry> ParsePackIndexV2(ReadOnlyMemory<byte> indexData)
     {
         var span = indexData.Span;
@@ -79,10 +101,30 @@ public static class PackIndex
         return entries;
     }
 
+    /// <summary>
+    /// The result of generating pack index and reverse index content for a pack file.
+    /// </summary>
+    /// <param name="IndexData">The bytes of the generated idx (version2) file.</param>
+    /// <param name="ReverseIndexData">The bytes of the generated reverse index (RIDX) file.</param>
     public record PackIndexGenerationResult(
         ReadOnlyMemory<byte> IndexData,
         ReadOnlyMemory<byte> ReverseIndexData);
 
+    /// <summary>
+    /// Generates a pack index (idx v2) and a reverse index (RIDX v1) from a pack file.
+    /// </summary>
+    /// <param name="packFileData">The bytes of the pack file including its trailing20-byte checksum.</param>
+    /// <returns>
+    /// A <see cref="PackIndexGenerationResult"/> containing the idx and RIDX file contents.
+    /// </returns>
+    /// <remarks>
+    /// This implementation emits only32-bit offsets in the idx file and does not include
+    /// the large-offsets table; therefore, it is suitable only for packs whose object offsets
+    /// fit within32 bits.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when object decompression fails or the actual decompressed size does not match the header.
+    /// </exception>
     public static PackIndexGenerationResult GeneratePackIndexV2(ReadOnlyMemory<byte> packFileData)
     {
         // First, create a minimal index by parsing the pack file sequentially
@@ -90,7 +132,7 @@ public static class PackIndex
         var header = PackFile.ParsePackFileHeader(packFileData);
         var objectCount = (int)header.ObjectCount;
         var packDataWithoutChecksum = packFileData[..^20];
-        
+
         // Parse objects to build the initial list with offsets
         var objects = new List<(long Offset, string SHA1, uint CRC32)>();
         var offset = 12; // After header
@@ -155,7 +197,7 @@ public static class PackIndex
         ReadOnlyMemory<byte> packChecksum)
     {
         var objectCount = sortedObjects.Count;
-        
+
         // Calculate total size: header(8) + fanout(1024) + sha1s(20*N) + crcs(4*N) + offsets(4*N) + pack_checksum(20) + idx_checksum(20)
         var totalSize = 8 + 1024 + (20 * objectCount) + (4 * objectCount) + (4 * objectCount) + 20 + 20;
         var buffer = new byte[totalSize];
@@ -248,13 +290,14 @@ public static class PackIndex
         // Build reverse index mapping
         // For each position in pack order, find its position in index order
         var indexOffset = 12;
+
         for (var packPos = 0; packPos < objectCount; packPos++)
         {
             var packObject = objectsInPackOrder[packPos];
-            
+
             // Find this object's position in the sorted (index) order
             var indexPos = objectsInIndexOrder.FindIndex(o => o.SHA1 == packObject.SHA1);
-            
+
             BinaryPrimitives.WriteUInt32BigEndian(span.Slice(indexOffset + packPos * 4, 4), (uint)indexPos);
         }
 
@@ -275,24 +318,24 @@ public static class PackIndex
     {
         // Use SharpZipLib's Inflater which tracks bytes consumed via TotalIn property
         var inflater = new Inflater(false); // false = expect zlib header
-        
+
         try
         {
             // Provide all available data to the inflater
             var availableData = packData[offset..].ToArray();
             inflater.SetInput(availableData);
-            
+
             // Decompress to a buffer - use a slightly larger buffer to ensure the inflater
             // reads the entire compressed stream and sets IsFinished
             var outputBuffer = new byte[expectedDecompressedSize + 1];
             var decompressedBytes = inflater.Inflate(outputBuffer);
-            
+
             if (decompressedBytes != expectedDecompressedSize)
             {
                 throw new InvalidOperationException(
-                    $"Decompression produced {decompressedBytes} bytes but expected {expectedDecompressedSize} bytes at offset {offset}");
+                $"Decompression produced {decompressedBytes} bytes but expected {expectedDecompressedSize} bytes at offset {offset}");
             }
-            
+
             // TotalIn tells us exactly how many bytes were consumed from the input
             // This should now be accurate since the inflater has finished the stream
             return (int)inflater.TotalIn;
@@ -312,26 +355,30 @@ public static class PackIndex
     private static uint CalculateCRC32(ReadOnlySpan<byte> data)
     {
         // Standard CRC32 used by Git (polynomial 0x04C11DB7)
-        const uint polynomial = 0xEDB88320; // Reversed polynomial
+        const uint Polynomial = 0xEDB88320; // Reversed polynomial
         var table = new uint[256];
-        
+
         // Build CRC table
         for (uint i = 0; i < 256; i++)
         {
             var crc = i;
+
             for (var j = 0; j < 8; j++)
             {
-                crc = (crc & 1) != 0 ? (crc >> 1) ^ polynomial : crc >> 1;
+                crc = (crc & 1) is not 0 ? (crc >> 1) ^ Polynomial : crc >> 1;
             }
+
             table[i] = crc;
         }
 
         // Calculate CRC
-        uint result = 0xFFFFFFFF;
+        var result = 0xFFFFFFFF;
+
         foreach (var b in data)
         {
             result = table[(result ^ b) & 0xFF] ^ (result >> 8);
         }
+
         return ~result;
     }
 }
