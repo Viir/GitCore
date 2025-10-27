@@ -160,7 +160,7 @@ public static class GitObjects
 
     public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetAllFilesFromTree(
         string treeSHA1,
-        IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1,
+        Func<string, PackFile.PackObject?> getObjectBySHA1,
         IReadOnlyList<string>? pathPrefix = null)
     {
         var files = new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
@@ -168,7 +168,8 @@ public static class GitObjects
 
         pathPrefix ??= Array.Empty<string>();
 
-        if (!objectsBySHA1.TryGetValue(treeSHA1, out var treeObject))
+        var treeObject = getObjectBySHA1(treeSHA1);
+        if (treeObject is null)
         {
             throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
         }
@@ -186,18 +187,16 @@ public static class GitObjects
 
             if (entry.Mode.StartsWith("100")) // Regular file
             {
-                if (objectsBySHA1.TryGetValue(entry.SHA1, out var blobObject))
+                var blobObject = getObjectBySHA1(entry.SHA1);
+                if (blobObject is not null && blobObject.Type == PackFile.ObjectType.Blob)
                 {
-                    if (blobObject.Type == PackFile.ObjectType.Blob)
-                    {
-                        files[filePath] = GetBlobContent(blobObject.Data);
-                    }
+                    files[filePath] = GetBlobContent(blobObject.Data);
                 }
             }
             else if (entry.Mode == "40000") // Directory
             {
                 // Recursively process subdirectories
-                var subFiles = GetAllFilesFromTree(entry.SHA1, objectsBySHA1, filePath);
+                var subFiles = GetAllFilesFromTree(entry.SHA1, getObjectBySHA1, filePath);
                 foreach (var (subPath, content) in subFiles)
                 {
                     files[subPath] = content;

@@ -13,15 +13,36 @@ public class LoadFromUrl
     /// <summary>
     /// Loads the contents of a Git tree from a GitHub or GitLab URL.
     /// </summary>
-    /// <param name="url">A tree URL like https://github.com/owner/repo/tree/commit-sha</param>
+    /// <param name="url">A tree URL like https://github.com/owner/repo/tree/commit-sha or https://github.com/owner/repo/tree/branch</param>
     /// <returns>A dictionary mapping file paths to their contents</returns>
     public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromUrl(string url)
     {
-        // Parse the URL to extract repository information and commit SHA
-        var (baseUrl, owner, repo, commitSha) = GitSmartHttp.ParseTreeUrl(url);
+        // Parse the URL to extract repository information and commit SHA or branch
+        var parsed = GitSmartHttp.ParseTreeUrl(url);
+
+        // Determine if it's a commit SHA or branch name
+        string commitSha;
+
+        if (IsLikelyCommitSha(parsed.CommitShaOrBranch))
+        {
+            commitSha = parsed.CommitShaOrBranch;
+        }
+        else
+        {
+            // It's a branch name, resolve it to a commit SHA
+            commitSha =
+                GitSmartHttp.FetchBranchCommitShaAsync(
+                parsed.BaseUrl,
+                parsed.Owner,
+                parsed.Repo,
+                parsed.CommitShaOrBranch)
+                .GetAwaiter()
+                .GetResult();
+        }
 
         // Fetch the pack file containing the commit and its tree
-        var packFileData = GitSmartHttp.FetchPackFileAsync(baseUrl, owner, repo, commitSha)
+        var packFileData =
+            GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha)
             .GetAwaiter()
             .GetResult();
 
@@ -48,6 +69,26 @@ public class LoadFromUrl
         var commit = GitObjects.ParseCommit(commitObject.Data);
 
         // Get all files from the tree recursively
-        return GitObjects.GetAllFilesFromTree(commit.TreeSHA1, objectsBySHA1);
+        return GitObjects.GetAllFilesFromTree(
+            commit.TreeSHA1,
+            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+    }
+
+    /// <summary>
+    /// Determines if a string is likely a commit SHA (40 hex characters) vs a branch name.
+    /// </summary>
+    private static bool IsLikelyCommitSha(string value)
+    {
+        // Git commit SHAs are 40 hex characters
+        if (value.Length is not 40)
+            return false;
+
+        foreach (var c in value)
+        {
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+                return false;
+        }
+
+        return true;
     }
 }
