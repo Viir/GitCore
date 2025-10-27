@@ -136,10 +136,14 @@ public static class PackIndex
         var packDataWithoutChecksum = packFileData[..^20];
 
         // Parse objects to build the initial list with offsets
-        var objects = new List<(long Offset, string SHA1, uint CRC32)>();
+        // We'll track both regular objects and deltas
+        var regularObjects = new List<(long Offset, string SHA1, uint CRC32)>();
+        var deltaObjects = new List<(long Offset, PackFile.ObjectType Type, long BaseOffset, string? BaseSHA1, byte[] DeltaData, uint CRC32)>();
+        
         var offset = 12; // After header
         var span = packDataWithoutChecksum.Span;
 
+        // First pass: parse all objects and collect delta information
         for (var i = 0; i < objectCount; i++)
         {
             var startOffset = offset;
@@ -160,63 +164,194 @@ public static class PackIndex
             // Handle delta objects specially
             if (objectType is PackFile.ObjectType.OfsDelta)
             {
-                // OfsDelta: Skip the negative offset encoding
-                // Offset is encoded in variable-length format (we skip it since we're not reconstructing)
+                // OfsDelta: Read the negative offset encoding
+                var negativeOffset = 0L;
                 currentByte = span[offset++];
+                negativeOffset = currentByte & 0x7F;
+                
                 while ((currentByte & 0x80) is not 0)
                 {
                     currentByte = span[offset++];
+                    negativeOffset = ((negativeOffset + 1) << 7) | ((long)currentByte & 0x7F);
                 }
 
-                // Now follows the compressed delta data - skip it
+                var baseOffset = startOffset - negativeOffset;
+
+                // Now follows the compressed delta data
                 var deltaCompressedLength = FindCompressedLength(span, offset, (int)size);
+                var compressedData = span.Slice(offset, deltaCompressedLength);
+                var deltaData = PackFile.DecompressZlib(compressedData, (int)size);
+                
+                var packedSize = (offset - startOffset) + deltaCompressedLength;
+                var packedData = span.Slice(startOffset, packedSize);
+                var crc32 = CalculateCRC32(packedData);
+
+                deltaObjects.Add((startOffset, objectType, baseOffset, null, deltaData, crc32));
                 offset += deltaCompressedLength;
-                continue; // Skip adding this object to the index for now
             }
             else if (objectType is PackFile.ObjectType.RefDelta)
             {
-                // RefDelta: Skip the 20-byte SHA1 reference
+                // RefDelta: Read the 20-byte SHA1 reference
+                var baseSHA1Bytes = span.Slice(offset, 20);
+                var baseSHA1 = Convert.ToHexStringLower(baseSHA1Bytes);
                 offset += 20;
 
-                // Now follows the compressed delta data - skip it
+                // Now follows the compressed delta data
                 var refDeltaCompressedLength = FindCompressedLength(span, offset, (int)size);
+                var compressedData = span.Slice(offset, refDeltaCompressedLength);
+                var deltaData = PackFile.DecompressZlib(compressedData, (int)size);
+                
+                var packedSize = (offset - startOffset) + refDeltaCompressedLength;
+                var packedData = span.Slice(startOffset, packedSize);
+                var crc32 = CalculateCRC32(packedData);
+
+                deltaObjects.Add((startOffset, objectType, -1, baseSHA1, deltaData, crc32));
                 offset += refDeltaCompressedLength;
-                continue; // Skip adding this object to the index for now
+            }
+            else
+            {
+                // Regular object (commit, tree, blob, tag)
+                // Decompress to find the actual compressed length and calculate SHA1
+                var compressedLength = FindCompressedLength(span, offset, (int)size);
+                var packedSize = (offset - startOffset) + compressedLength;
+
+                // Calculate CRC32 of the complete packed object
+                var packedData = span.Slice(startOffset, packedSize);
+                var crc32 = CalculateCRC32(packedData);
+
+                // Decompress to calculate SHA1
+                var compressedData = span.Slice(offset, compressedLength);
+                var decompressed = PackFile.DecompressZlib(compressedData, (int)size);
+
+                // Calculate SHA1
+                var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{objectType.ToString().ToLower()} {size}\0");
+                var dataForHash = new byte[objectHeader.Length + decompressed.Length];
+                Array.Copy(objectHeader, 0, dataForHash, 0, objectHeader.Length);
+                Array.Copy(decompressed, 0, dataForHash, objectHeader.Length, decompressed.Length);
+                var sha1 = System.Security.Cryptography.SHA1.HashData(dataForHash);
+                var sha1Hex = Convert.ToHexStringLower(sha1);
+
+                regularObjects.Add((startOffset, sha1Hex, crc32));
+                offset += compressedLength;
+            }
+        }
+
+        // Second pass: reconstruct delta objects
+        // Build lookup maps for quick access
+        var objectsByOffset = regularObjects.ToDictionary(o => o.Offset, o => (o.SHA1, Data: (byte[]?)null, Type: (PackFile.ObjectType?)null));
+        var objectsBySHA1 = regularObjects.ToDictionary(o => o.SHA1, o => (o.Offset, Data: (byte[]?)null, Type: (PackFile.ObjectType?)null));
+
+        // Also track delta objects by offset for chain resolution
+        var deltasByOffset = deltaObjects.ToDictionary(d => d.Offset);
+
+        // Helper function to get object data by offset (handles delta chains)
+        (byte[] Data, PackFile.ObjectType Type) GetObjectDataByOffset(long objOffset)
+        {
+            // Check if it's a regular object we've cached
+            if (objectsByOffset.TryGetValue(objOffset, out var cached) && cached.Data is not null && cached.Type is not null)
+            {
+                return (cached.Data, cached.Type.Value);
             }
 
-            // Decompress to find the actual compressed length and calculate SHA1
-            // We decompress incrementally to find where the compressed data ends
-            var compressedLength = FindCompressedLength(span, offset, (int)size);
-            var packedSize = (offset - startOffset) + compressedLength;
+            // Check if it's a delta object
+            if (deltasByOffset.TryGetValue(objOffset, out var delta))
+            {
+                // Recursively resolve the base
+                byte[] baseData;
+                PackFile.ObjectType baseType;
 
-            // Calculate CRC32 of the complete packed object
-            var packedData = span.Slice(startOffset, packedSize);
-            var crc32 = CalculateCRC32(packedData);
+                if (delta.Type == PackFile.ObjectType.OfsDelta)
+                {
+                    (baseData, baseType) = GetObjectDataByOffset(delta.BaseOffset);
+                }
+                else // RefDelta
+                {
+                    (baseData, baseType) = GetObjectDataBySHA1(delta.BaseSHA1!);
+                }
 
-            // Decompress to calculate SHA1
-            var compressedData = span.Slice(offset, compressedLength);
-            var decompressed = PackFile.DecompressZlib(compressedData, (int)size);
+                // Apply delta to reconstruct
+                var reconstructedData = PackFile.ApplyDelta(baseData, delta.DeltaData);
+                return (reconstructedData, baseType);
+            }
 
-            // Calculate SHA1
-            var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{objectType.ToString().ToLower()} {size}\0");
-            var dataForHash = new byte[objectHeader.Length + decompressed.Length];
+            // Parse a regular object at this offset
+            var objSpan = packDataWithoutChecksum.Span;
+            var pos = (int)objOffset;
+
+            var currentByte = objSpan[pos++];
+            var objType = (PackFile.ObjectType)((currentByte >> 4) & 0x7);
+            long objSize = currentByte & 0xF;
+            var objShift = 4;
+
+            while ((currentByte & 0x80) is not 0)
+            {
+                currentByte = objSpan[pos++];
+                objSize |= (long)(currentByte & 0x7F) << objShift;
+                objShift += 7;
+            }
+
+            // Decompress the regular object
+            var compLength = FindCompressedLength(objSpan, pos, (int)objSize);
+            var compData = objSpan.Slice(pos, compLength);
+            var data = PackFile.DecompressZlib(compData, (int)objSize);
+
+            // Cache it
+            if (objectsByOffset.ContainsKey(objOffset))
+            {
+                var entry = objectsByOffset[objOffset];
+                objectsByOffset[objOffset] = (entry.SHA1, data, objType);
+                if (objectsBySHA1.ContainsKey(entry.SHA1))
+                {
+                    objectsBySHA1[entry.SHA1] = (objOffset, data, objType);
+                }
+            }
+
+            return (data, objType);
+        }
+
+        // Helper function to get object data and type by SHA1
+        (byte[] Data, PackFile.ObjectType Type) GetObjectDataBySHA1(string sha1)
+        {
+            if (objectsBySHA1.TryGetValue(sha1, out var cached) && cached.Data is not null && cached.Type is not null)
+            {
+                return (cached.Data, cached.Type.Value);
+            }
+
+            // Get by offset
+            var objOffset = objectsBySHA1[sha1].Offset;
+            return GetObjectDataByOffset(objOffset);
+        }
+
+        // Reconstruct delta objects
+        var reconstructedObjects = new List<(long Offset, string SHA1, uint CRC32)>();
+
+        foreach (var delta in deltaObjects)
+        {
+            var (reconstructedData, baseType) = GetObjectDataByOffset(delta.Offset);
+
+            // Calculate SHA1 of the reconstructed object
+            var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{baseType.ToString().ToLower()} {reconstructedData.Length}\0");
+            var dataForHash = new byte[objectHeader.Length + reconstructedData.Length];
             Array.Copy(objectHeader, 0, dataForHash, 0, objectHeader.Length);
-            Array.Copy(decompressed, 0, dataForHash, objectHeader.Length, decompressed.Length);
+            Array.Copy(reconstructedData, 0, dataForHash, objectHeader.Length, reconstructedData.Length);
             var sha1 = System.Security.Cryptography.SHA1.HashData(dataForHash);
             var sha1Hex = Convert.ToHexStringLower(sha1);
 
-            objects.Add((startOffset, sha1Hex, crc32));
-            offset += compressedLength;
+            reconstructedObjects.Add((delta.Offset, sha1Hex, delta.CRC32));
         }
 
+        // Combine regular and reconstructed objects
+        var allObjects = regularObjects.Concat(reconstructedObjects).ToList();
+
         // Sort objects by SHA1 for the index file
-        var sortedObjects = objects.OrderBy(o => o.SHA1, StringComparer.Ordinal).ToList();
+        var sortedObjects = allObjects.OrderBy(o => o.SHA1, StringComparer.Ordinal).ToList();
 
         // Build pack index v2
         var indexData = BuildPackIndexV2(sortedObjects, packFileData[^20..]);
 
-        // Build reverse index
-        var reverseIndexData = BuildReverseIndexV1(objects, sortedObjects, packFileData[^20..]);
+        // Build reverse index (using original order which is by offset)
+        var objectsInPackOrder = allObjects.OrderBy(o => o.Offset).ToList();
+        var reverseIndexData = BuildReverseIndexV1(objectsInPackOrder, sortedObjects, packFileData[^20..]);
 
         return new PackIndexGenerationResult(indexData, reverseIndexData);
     }
