@@ -18,7 +18,19 @@ public class ParsePackFileTests
 
         filesFromClone.Should().ContainKey(["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.pack"]);
 
-        throw new NotImplementedException("Implement pack file parsing and verification of its contents.");
+        var packFileData = filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.pack"]];
+
+        // Parse pack file header
+        var header = PackFile.ParsePackFileHeader(packFileData);
+
+        // Verify pack file version
+        header.Version.Should().Be(2u, "Pack file should use version 2 format");
+
+        // Verify number of objects in pack file
+        header.ObjectCount.Should().Be(6u, "Pack file should contain 6 objects");
+
+        // Verify pack file checksum
+        PackFile.VerifyPackFileChecksum(packFileData).Should().BeTrue("Pack file checksum should be valid");
     }
 
     private static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTestDataFiles_2025_10_27()
