@@ -37,6 +37,7 @@ public class ParsePackFileTests
     public void Parse_pack_file_objects_and_get_file_from_commit()
     {
         var filesFromClone = LoadTestDataFiles_2025_10_27();
+
         var packFileData = filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.pack"]];
         var idxFileData = filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.idx"]];
 
@@ -46,7 +47,7 @@ public class ParsePackFileTests
 
         // Parse all objects from pack file using the index
         var objects = PackFile.ParseAllObjects(packFileData, indexEntries);
-        
+
         // Verify we got all 6 objects
         objects.Count.Should().Be(6, "Pack file should contain 6 objects");
 
@@ -59,7 +60,7 @@ public class ParsePackFileTests
 
         // Verify the SHA256 hash of the README.md content
         var sha256 = System.Security.Cryptography.SHA256.HashData(readmeContent.Span);
-        var sha256Hex = System.Convert.ToHexStringLower(sha256);
+        var sha256Hex = Convert.ToHexStringLower(sha256);
 
         sha256Hex.Should().Be("3ac5bef607354b0b2b30ad140d34a4f393d12bfd375f9a8b881bb2b361cb21c7",
             "README.md content should match expected SHA256 hash");

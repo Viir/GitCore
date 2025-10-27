@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 
 namespace GitCore;
@@ -32,7 +31,7 @@ public static class GitObjects
         string? author = null;
         string? committer = null;
         var messageLines = new List<string>();
-        bool inMessage = false;
+        var inMessage = false;
 
         foreach (var line in lines)
         {
@@ -46,19 +45,19 @@ public static class GitObjects
             }
             else if (line.StartsWith("tree "))
             {
-                treeSHA1 = line.Substring(5);
+                treeSHA1 = line[5..];
             }
             else if (line.StartsWith("parent "))
             {
-                parentSHA1 = line.Substring(7);
+                parentSHA1 = line[7..];
             }
             else if (line.StartsWith("author "))
             {
-                author = line.Substring(7);
+                author = line[7..];
             }
             else if (line.StartsWith("committer "))
             {
-                committer = line.Substring(10);
+                committer = line[10..];
             }
         }
 
@@ -76,26 +75,30 @@ public static class GitObjects
     {
         var entries = new List<TreeEntry>();
         var span = data.Span;
-        int offset = 0;
+        var offset = 0;
 
         while (offset < span.Length)
         {
             // Read mode (e.g., "100644")
-            int modeEnd = offset;
-            while (modeEnd < span.Length && span[modeEnd] != " "u8[0])
+            var modeEnd = offset;
+
+            while (modeEnd < span.Length && span[modeEnd] is not 32)
             {
                 modeEnd++;
             }
-            var mode = Encoding.UTF8.GetString(span.Slice(offset, modeEnd - offset));
+
+            var mode = Encoding.UTF8.GetString(span[offset..modeEnd]);
             offset = modeEnd + 1; // Skip space
 
             // Read name
-            int nameEnd = offset;
-            while (nameEnd < span.Length && span[nameEnd] != "\0"u8[0])
+            var nameEnd = offset;
+
+            while (nameEnd < span.Length && span[nameEnd] is not 0)
             {
                 nameEnd++;
             }
-            var name = Encoding.UTF8.GetString(span.Slice(offset, nameEnd - offset));
+
+            var name = Encoding.UTF8.GetString(span[offset..nameEnd]);
             offset = nameEnd + 1; // Skip null byte
 
             // Read SHA1 (20 bytes)
@@ -119,7 +122,7 @@ public static class GitObjects
         IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1)
     {
         var files = new Dictionary<string, ReadOnlyMemory<byte>>();
-        
+
         if (!objectsBySHA1.TryGetValue(treeSHA1, out var treeObject))
         {
             throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");

@@ -38,7 +38,7 @@ public static class PackFile
         var span = packFileData.Span;
 
         // Verify PACK signature
-        if (!span.Slice(0, 4).SequenceEqual("PACK"u8))
+        if (!span[..4].SequenceEqual("PACK"u8))
         {
             throw new ArgumentException("Invalid pack file signature");
         }
@@ -60,7 +60,7 @@ public static class PackFile
         }
 
         // Last 20 bytes are the SHA-1 checksum
-        return packFileData.Slice(packFileData.Length - 20);
+        return packFileData[^20..];
     }
 
     public static bool VerifyPackFileChecksum(ReadOnlyMemory<byte> packFileData)
@@ -71,10 +71,10 @@ public static class PackFile
         }
 
         // Get the stored checksum (last 20 bytes)
-        var storedChecksum = packFileData.Slice(packFileData.Length - 20);
+        var storedChecksum = packFileData[^20..];
 
         // Calculate checksum of everything except the last 20 bytes
-        var dataToHash = packFileData.Slice(0, packFileData.Length - 20);
+        var dataToHash = packFileData[..^20];
         var calculatedChecksum = System.Security.Cryptography.SHA1.HashData(dataToHash.Span);
 
         // Compare checksums
@@ -85,17 +85,17 @@ public static class PackFile
     {
         var header = ParsePackFileHeader(packFileData);
         var objects = new List<PackObject>();
-        
-        var dataWithoutChecksum = packFileData.Slice(0, packFileData.Length - 20);
 
-        if (indexEntries != null && indexEntries.Count > 0)
+        var dataWithoutChecksum = packFileData[..^20];
+
+        if (indexEntries is not null && indexEntries.Count > 0)
         {
             // Use index file for accurate offsets
-            for (int i = 0; i < indexEntries.Count; i++)
+            for (var i = 0; i < indexEntries.Count; i++)
             {
                 var entry = indexEntries[i];
                 var offset = (int)entry.Offset;
-                
+
                 // Determine compressed size from next offset or end of data
                 int compressedSize;
                 if (i + 1 < indexEntries.Count)
@@ -106,15 +106,15 @@ public static class PackFile
                 {
                     compressedSize = dataWithoutChecksum.Length - offset;
                 }
-                
+
                 var packObject = ParseObjectAtWithSize(dataWithoutChecksum, offset, compressedSize);
-                
+
                 // Verify SHA1 matches
                 if (packObject.SHA1 != entry.SHA1)
                 {
                     throw new InvalidOperationException($"SHA1 mismatch: expected {entry.SHA1}, got {packObject.SHA1}");
                 }
-                
+
                 objects.Add(packObject);
             }
         }
@@ -122,8 +122,8 @@ public static class PackFile
         {
             // Fallback: parse without index (less reliable due to ZLibStream buffering)
             var offset = 12; // Skip header
-            
-            for (int i = 0; i < header.ObjectCount; i++)
+
+            for (var i = 0; i < header.ObjectCount; i++)
             {
                 var (packObject, bytesRead) = ParseObjectAt(dataWithoutChecksum, offset);
                 objects.Add(packObject);
@@ -143,7 +143,7 @@ public static class PackFile
         var currentByte = span[offset++];
         var objectType = (ObjectType)((currentByte >> 4) & 0x7);
         long size = currentByte & 0xF;
-        int shift = 4;
+        var shift = 4;
 
         // Continue reading size if MSB is set
         while ((currentByte & 0x80) != 0)
@@ -156,7 +156,7 @@ public static class PackFile
         // Calculate actual compressed data size (total size minus header bytes we just read)
         var headerBytesRead = offset - startOffset;
         var compressedDataSize = totalSize - headerBytesRead;
-        
+
         // Extract the compressed data
         var compressedData = packFileData.Slice(offset, compressedDataSize);
         var decompressedData = DecompressZlibFixed(compressedData.Span, (int)size);
@@ -186,7 +186,7 @@ public static class PackFile
         var currentByte = span[offset++];
         var objectType = (ObjectType)((currentByte >> 4) & 0x7);
         long size = currentByte & 0xF;
-        int shift = 4;
+        var shift = 4;
 
         // Continue reading size if MSB is set
         while ((currentByte & 0x80) != 0)
@@ -201,9 +201,9 @@ public static class PackFile
         }
 
         // Read compressed data using zlib
-        var compressedData = packFileData.Slice(offset);
-        var decompressedData = DecompressZlib(compressedData.Span, (int)size, out int compressedBytesRead);
-        
+        var compressedData = packFileData[offset..];
+        var decompressedData = DecompressZlib(compressedData.Span, (int)size, out var compressedBytesRead);
+
         offset += compressedBytesRead;
 
         // Calculate SHA1 of the decompressed object
@@ -223,17 +223,17 @@ public static class PackFile
     private static byte[] DecompressZlibFixed(ReadOnlySpan<byte> compressedData, int expectedSize)
     {
         using var inputStream = new System.IO.MemoryStream(compressedData.ToArray());
-        using var zlibStream = new System.IO.Compression.ZLibStream(inputStream, CompressionMode.Decompress);
+        using var zlibStream = new ZLibStream(inputStream, CompressionMode.Decompress);
         using var outputStream = new System.IO.MemoryStream();
-        
+
         zlibStream.CopyTo(outputStream);
         var result = outputStream.ToArray();
-        
+
         if (result.Length != expectedSize)
         {
             throw new InvalidOperationException($"Decompressed size mismatch: expected {expectedSize}, got {result.Length}");
         }
-        
+
         return result;
     }
 
@@ -241,52 +241,46 @@ public static class PackFile
     {
         // Wrap the data in a non-seekable stream that tracks actual reads
         var countingWrapper = new NonSeekableCountingStream(compressedData.ToArray());
-        
-        using (var zlibStream = new System.IO.Compression.ZLibStream(countingWrapper, CompressionMode.Decompress, leaveOpen: true))
+
+        using var zlibStream = new ZLibStream(countingWrapper, CompressionMode.Decompress, leaveOpen: true);
+
+        var outputBuffer = new System.IO.MemoryStream();
+        var buffer = new byte[4096];
+        var totalDecompressed = 0;
+
+        while (totalDecompressed < expectedSize)
         {
-            var outputBuffer = new System.IO.MemoryStream();
-            var buffer = new byte[4096];
-            int totalDecompressed = 0;
-            
-            while (totalDecompressed < expectedSize)
+            var toRead = Math.Min(buffer.Length, expectedSize - totalDecompressed);
+            var read = zlibStream.Read(buffer, 0, toRead);
+
+            if (read is 0)
             {
-                int toRead = Math.Min(buffer.Length, expectedSize - totalDecompressed);
-                int read = zlibStream.Read(buffer, 0, toRead);
-                
-                if (read == 0)
-                {
-                    throw new InvalidOperationException($"Unexpected end of zlib stream. Expected {expectedSize} bytes, got {totalDecompressed}");
-                }
-                
-                outputBuffer.Write(buffer, 0, read);
-                totalDecompressed += read;
+                throw new InvalidOperationException($"Unexpected end of zlib stream. Expected {expectedSize} bytes, got {totalDecompressed}");
             }
-            
-            // Try to read one more byte to ensure the stream has processed the end marker
-            // This helps ZLibStream flush its internal buffers and update the position correctly
-            var dummy = new byte[1];
-            zlibStream.Read(dummy, 0, 1);
-            
-            bytesRead = countingWrapper.BytesRead;
-            return outputBuffer.ToArray();
+
+            outputBuffer.Write(buffer, 0, read);
+            totalDecompressed += read;
         }
+
+        // Try to read one more byte to ensure the stream has processed the end marker
+        // This helps ZLibStream flush its internal buffers and update the position correctly
+        var dummy = new byte[1];
+
+        zlibStream.ReadExactly(dummy, 0, 1);
+
+        bytesRead = countingWrapper.BytesRead;
+        return outputBuffer.ToArray();
     }
 
-    private class NonSeekableCountingStream : System.IO.Stream
+    private class NonSeekableCountingStream(byte[] data) : System.IO.Stream
     {
-        private readonly byte[] _data;
-        private int _position;
+        private readonly byte[] _data = data;
+        private int _position = 0;
         public int BytesRead => _position;
-
-        public NonSeekableCountingStream(byte[] data)
-        {
-            _data = data;
-            _position = 0;
-        }
 
         public override int Read(byte[] buffer, int offset, int count)
         {
-            int bytesToRead = Math.Min(count, _data.Length - _position);
+            var bytesToRead = Math.Min(count, _data.Length - _position);
             if (bytesToRead > 0)
             {
                 Array.Copy(_data, _position, buffer, offset, bytesToRead);
@@ -299,10 +293,10 @@ public static class PackFile
         public override bool CanSeek => false;
         public override bool CanWrite => false;
         public override long Length => throw new NotSupportedException();
-        public override long Position 
-        { 
-            get => _position; 
-            set => throw new NotSupportedException(); 
+        public override long Position
+        {
+            get => _position;
+            set => throw new NotSupportedException();
         }
         public override void Flush() { }
         public override long Seek(long offset, System.IO.SeekOrigin origin) => throw new NotSupportedException();
