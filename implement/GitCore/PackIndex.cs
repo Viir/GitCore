@@ -14,8 +14,9 @@ public static class PackIndex
     {
         var span = indexData.Span;
         
-        // Check magic number
-        if (span[0] != 0xFF || span[1] != 't' || span[2] != 'O' || span[3] != 'c')
+        // Check magic number (0xFF, 't', 'O', 'c')
+        ReadOnlySpan<byte> expectedSignature = [0xFF, (byte)'t', (byte)'O', (byte)'c'];
+        if (!span.Slice(0, 4).SequenceEqual(expectedSignature))
         {
             throw new ArgumentException("Invalid pack index signature");
         }

@@ -82,7 +82,7 @@ public static class GitObjects
         {
             // Read mode (e.g., "100644")
             int modeEnd = offset;
-            while (modeEnd < span.Length && span[modeEnd] != (byte)' ')
+            while (modeEnd < span.Length && span[modeEnd] != " "u8[0])
             {
                 modeEnd++;
             }
@@ -91,7 +91,7 @@ public static class GitObjects
 
             // Read name
             int nameEnd = offset;
-            while (nameEnd < span.Length && span[nameEnd] != 0)
+            while (nameEnd < span.Length && span[nameEnd] != "\0"u8[0])
             {
                 nameEnd++;
             }

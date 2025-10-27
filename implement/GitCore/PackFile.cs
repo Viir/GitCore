@@ -38,7 +38,7 @@ public static class PackFile
         var span = packFileData.Span;
 
         // Verify PACK signature
-        if (span[0] != 'P' || span[1] != 'A' || span[2] != 'C' || span[3] != 'K')
+        if (!span.Slice(0, 4).SequenceEqual("PACK"u8))
         {
             throw new ArgumentException("Invalid pack file signature");
         }
