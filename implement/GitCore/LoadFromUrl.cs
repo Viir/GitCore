@@ -75,6 +75,50 @@ public class LoadFromUrl
     }
 
     /// <summary>
+    /// Loads the contents of a Git tree from a Git repository URL and commit SHA.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="commitSha">Commit SHA to load</param>
+    /// <returns>A dictionary mapping file paths to their contents</returns>
+    public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromGitUrl(
+        string gitUrl,
+        string commitSha)
+    {
+        // Fetch the pack file containing the commit and its tree
+        var packFileData =
+            GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha)
+            .GetAwaiter()
+            .GetResult();
+
+        // Generate index for the pack file
+        var indexResult = PackIndex.GeneratePackIndexV2(packFileData);
+        var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);
+
+        // Parse all objects from the pack file
+        var objects = PackFile.ParseAllObjects(packFileData, indexEntries);
+        var objectsBySHA1 = PackFile.GetObjectsBySHA1(objects);
+
+        // Get the commit object
+        if (!objectsBySHA1.TryGetValue(commitSha, out var commitObject))
+        {
+            throw new InvalidOperationException($"Commit {commitSha} not found in pack file");
+        }
+
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
+        {
+            throw new InvalidOperationException($"Object {commitSha} is not a commit");
+        }
+
+        // Parse the commit to get the tree SHA
+        var commit = GitObjects.ParseCommit(commitObject.Data);
+
+        // Get all files from the tree recursively
+        return GitObjects.GetAllFilesFromTree(
+            commit.TreeSHA1,
+            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+    }
+
+    /// <summary>
     /// Determines if a string is likely a commit SHA (40 hex characters) vs a branch name.
     /// </summary>
     private static bool IsLikelyCommitSha(string value)
