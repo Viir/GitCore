@@ -224,10 +224,10 @@ public static class PackFile
     {
         using var inputStream = new System.IO.MemoryStream(compressedData.ToArray());
         using var zlibStream = new ZLibStream(inputStream, CompressionMode.Decompress);
-        
+
         var result = new byte[expectedSize];
         zlibStream.ReadExactly(result);
-        
+
         return result;
     }
 
