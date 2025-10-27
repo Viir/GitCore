@@ -22,7 +22,7 @@ public class LoadFromGitHubTests
         readmeSHA256Hex.Should().Be("3ac5bef607354b0b2b30ad140d34a4f393d12bfd375f9a8b881bb2b361cb21c7");
     }
 
-    [Fact(Skip = "Delta object reconstruction not implemented - required objects missing from pack file")]
+    [Fact]
     public void Load_tree_at_root_via_named_branch()
     {
         var treeContents =
@@ -35,7 +35,7 @@ public class LoadFromGitHubTests
 
         // Assert that there's at least one file in the "implement" subdirectory
         var hasImplementSubdir = treeContents.Keys
-            .Any(path => path.Count >= 2 && path[0] == "implement");
+            .Any(path => path.Count >= 2 && path[0] is "implement");
 
         hasImplementSubdir.Should().BeTrue("There should be files in the 'implement' subdirectory");
     }
