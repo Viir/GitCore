@@ -90,8 +90,9 @@ public static class PackFile
 
         var dataWithoutChecksum = packFileData[..^20];
 
-        // Build a map of offset to index entry for quick lookup
+        // Build lookup maps for quick access
         var entriesByOffset = indexEntries.ToDictionary(e => e.Offset, e => e);
+        var entriesBySHA1 = indexEntries.ToDictionary(e => e.SHA1base16, e => e);
 
         // First pass: parse regular objects and store them for delta reconstruction
         var objectsByOffset = new Dictionary<long, (ObjectType Type, byte[] Data)>();
@@ -144,7 +145,7 @@ public static class PackFile
 
                 // Decompress delta data
                 // Find compressed length by trying to decompress
-                var compressedLength = FindCompressedLengthForDelta(span, pos, (int)size);
+                var compressedLength = FindCompressedLengthForRegular(span, pos, (int)size);
                 var compressedData = span.Slice(pos, compressedLength);
                 var deltaData = DecompressZlib(compressedData, (int)size);
 
@@ -167,9 +168,7 @@ public static class PackFile
                 if (!objectsBySHA1.TryGetValue(baseSHA1, out var baseObj))
                 {
                     // Need to find the base object by SHA1
-                    // Search through entries
-                    var baseEntry = indexEntries.FirstOrDefault(e => e.SHA1base16 == baseSHA1);
-                    if (baseEntry == null)
+                    if (!entriesBySHA1.TryGetValue(baseSHA1, out var baseEntry))
                     {
                         throw new InvalidOperationException($"Base object {baseSHA1} not found for RefDelta");
                     }
@@ -177,7 +176,7 @@ public static class PackFile
                 }
 
                 // Decompress delta data
-                var compressedLength = FindCompressedLengthForDelta(span, pos, (int)size);
+                var compressedLength = FindCompressedLengthForRegular(span, pos, (int)size);
                 var compressedData = span.Slice(pos, compressedLength);
                 var deltaData = DecompressZlib(compressedData, (int)size);
 
@@ -223,12 +222,6 @@ public static class PackFile
             {
                 inflater.Reset();
             }
-        }
-
-        // Helper to find compressed length for delta objects
-        int FindCompressedLengthForDelta(ReadOnlySpan<byte> data, int offset, int expectedSize)
-        {
-            return FindCompressedLengthForRegular(data, offset, expectedSize);
         }
 
         // Parse all objects using the index

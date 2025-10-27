@@ -296,9 +296,8 @@ public static class PackIndex
             var data = PackFile.DecompressZlib(compData, (int)objSize);
 
             // Cache it
-            if (objectsByOffset.ContainsKey(objOffset))
+            if (objectsByOffset.TryGetValue(objOffset, out var entry))
             {
-                var entry = objectsByOffset[objOffset];
                 objectsByOffset[objOffset] = (entry.SHA1, data, objType);
                 if (objectsBySHA1.ContainsKey(entry.SHA1))
                 {
