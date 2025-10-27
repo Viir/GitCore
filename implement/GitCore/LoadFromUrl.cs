@@ -46,6 +46,38 @@ public class LoadFromUrl
             .GetAwaiter()
             .GetResult();
 
+        return LoadTreeContentsFromPackFile(packFileData, commitSha);
+    }
+
+    /// <summary>
+    /// Loads the contents of a Git tree from a Git repository URL and commit SHA.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="commitSha">Commit SHA to load</param>
+    /// <returns>A dictionary mapping file paths to their contents</returns>
+    public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromGitUrl(
+        string gitUrl,
+        string commitSha)
+    {
+        // Fetch the pack file containing the commit and its tree
+        var packFileData =
+            GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha)
+            .GetAwaiter()
+            .GetResult();
+
+        return LoadTreeContentsFromPackFile(packFileData, commitSha);
+    }
+
+    /// <summary>
+    /// Loads the contents of a Git tree from pack file data.
+    /// </summary>
+    /// <param name="packFileData">Pack file data containing the commit and tree objects</param>
+    /// <param name="commitSha">Commit SHA to load</param>
+    /// <returns>A dictionary mapping file paths to their contents</returns>
+    private static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromPackFile(
+        ReadOnlyMemory<byte> packFileData,
+        string commitSha)
+    {
         // Generate index for the pack file
         var indexResult = PackIndex.GeneratePackIndexV2(packFileData);
         var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);

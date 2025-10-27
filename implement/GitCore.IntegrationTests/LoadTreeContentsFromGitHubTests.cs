@@ -41,6 +41,25 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
+    public void Load_tree_from_repository_url_and_commit_sha()
+    {
+        // Test inputs: repository URL and commit SHA
+        var repositoryUrl = "https://github.com/Viir/GitCore.git";
+        var commitSha = "c3135b803587ce0b4bf8f04f089f58ca4f27015c";
+
+        // Load the tree contents using the git URL and commit SHA
+        var treeContents = LoadFromUrl.LoadTreeContentsFromGitUrl(repositoryUrl, commitSha);
+
+        // Verify that the tree was loaded successfully
+        treeContents.Should().NotBeNull("Tree should be loaded");
+        treeContents.Count.Should().BeGreaterThan(0, "Tree should contain files");
+
+        // Verify that README.md exists using the same pattern as other tests
+        var readmeFile = treeContents[["README.md"]];
+        readmeFile.Length.Should().BeGreaterThan(0, "README.md should exist and have content");
+    }
+
+    [Fact]
     public void Placeholder()
     {
         /*
