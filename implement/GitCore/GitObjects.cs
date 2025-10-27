@@ -197,10 +197,14 @@ public static class GitObjects
             else if (entry.Mode == "40000") // Directory
             {
                 // Recursively process subdirectories
-                var subFiles = GetAllFilesFromTree(entry.SHA1, objectsBySHA1, filePath);
-                foreach (var (subPath, content) in subFiles)
+                // Skip if the subtree is not available (e.g., stored as a delta that wasn't reconstructed)
+                if (objectsBySHA1.ContainsKey(entry.SHA1))
                 {
-                    files[subPath] = content;
+                    var subFiles = GetAllFilesFromTree(entry.SHA1, objectsBySHA1, filePath);
+                    foreach (var (subPath, content) in subFiles)
+                    {
+                        files[subPath] = content;
+                    }
                 }
             }
         }

@@ -155,6 +155,40 @@ public static class PackIndex
                 shift += 7;
             }
 
+            // Handle delta objects specially
+            if (objectType == PackFile.ObjectType.OfsDelta)
+            {
+                // OfsDelta: Read the offset encoding
+                // Negative offset encoded in variable-length format
+                long deltaOffset = 0;
+                currentByte = span[offset++];
+                deltaOffset = currentByte & 0x7F;
+                
+                while ((currentByte & 0x80) != 0)
+                {
+                    deltaOffset++;
+                    currentByte = span[offset++];
+                    deltaOffset = (deltaOffset << 7) + (currentByte & 0x7F);
+                }
+                
+                // Now follows the compressed delta data
+                // For now, skip delta reconstruction and just skip this object
+                // We'll need to implement delta reconstruction to properly support this
+                var deltaCompressedLength = FindCompressedLength(span, offset, (int)size);
+                offset += deltaCompressedLength;
+                continue; // Skip adding this object to the index for now
+            }
+            else if (objectType == PackFile.ObjectType.RefDelta)
+            {
+                // RefDelta: Read the 20-byte SHA1 reference
+                offset += 20; // Skip SHA1
+                
+                // Now follows the compressed delta data
+                var refDeltaCompressedLength = FindCompressedLength(span, offset, (int)size);
+                offset += refDeltaCompressedLength;
+                continue; // Skip adding this object to the index for now
+            }
+
             // Decompress to find the actual compressed length and calculate SHA1
             // We decompress incrementally to find where the compressed data ends
             var compressedLength = FindCompressedLength(span, offset, (int)size);
