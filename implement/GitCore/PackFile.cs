@@ -224,16 +224,10 @@ public static class PackFile
     {
         using var inputStream = new System.IO.MemoryStream(compressedData.ToArray());
         using var zlibStream = new ZLibStream(inputStream, CompressionMode.Decompress);
-        using var outputStream = new System.IO.MemoryStream();
-
-        zlibStream.CopyTo(outputStream);
-        var result = outputStream.ToArray();
-
-        if (result.Length != expectedSize)
-        {
-            throw new InvalidOperationException($"Decompressed size mismatch: expected {expectedSize}, got {result.Length}");
-        }
-
+        
+        var result = new byte[expectedSize];
+        zlibStream.ReadExactly(result);
+        
         return result;
     }
 
@@ -244,32 +238,11 @@ public static class PackFile
 
         using var zlibStream = new ZLibStream(countingWrapper, CompressionMode.Decompress, leaveOpen: true);
 
-        var outputBuffer = new System.IO.MemoryStream();
-        var buffer = new byte[4096];
-        var totalDecompressed = 0;
-
-        while (totalDecompressed < expectedSize)
-        {
-            var toRead = Math.Min(buffer.Length, expectedSize - totalDecompressed);
-            var read = zlibStream.Read(buffer, 0, toRead);
-
-            if (read is 0)
-            {
-                throw new InvalidOperationException($"Unexpected end of zlib stream. Expected {expectedSize} bytes, got {totalDecompressed}");
-            }
-
-            outputBuffer.Write(buffer, 0, read);
-            totalDecompressed += read;
-        }
-
-        // Try to read one more byte to ensure the stream has processed the end marker
-        // This helps ZLibStream flush its internal buffers and update the position correctly
-        var dummy = new byte[1];
-
-        zlibStream.ReadExactly(dummy, 0, 1);
+        var result = new byte[expectedSize];
+        zlibStream.ReadExactly(result);
 
         bytesRead = countingWrapper.BytesRead;
-        return outputBuffer.ToArray();
+        return result;
     }
 
     private class NonSeekableCountingStream(byte[] data) : System.IO.Stream
