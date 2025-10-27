@@ -17,11 +17,20 @@ public static class GitSmartHttp
     private const string GitProtocolCapabilities = "multi_ack_detailed side-band-64k ofs-delta";
 
     /// <summary>
-    /// Parses a GitHub or GitLab tree URL to extract repository information and commit SHA.
+    /// Result of parsing a tree URL.
     /// </summary>
-    /// <param name="url">URL like https://github.com/owner/repo/tree/commit-sha</param>
-    /// <returns>Tuple of (baseUrl, owner, repo, commitSha)</returns>
-    public static (string BaseUrl, string Owner, string Repo, string CommitSha) ParseTreeUrl(string url)
+    public record ParseTreeUrlResult(
+        string BaseUrl,
+        string Owner,
+        string Repo,
+        string CommitShaOrBranch);
+
+    /// <summary>
+    /// Parses a GitHub or GitLab tree URL to extract repository information and commit SHA or branch.
+    /// </summary>
+    /// <param name="url">URL like https://github.com/owner/repo/tree/commit-sha or https://github.com/owner/repo/tree/main</param>
+    /// <returns>Record containing baseUrl, owner, repo, and commitShaOrBranch</returns>
+    public static ParseTreeUrlResult ParseTreeUrl(string url)
     {
         var uri = new Uri(url);
         var host = uri.Host;
@@ -30,8 +39,8 @@ public static class GitSmartHttp
 
         if (host is "github.com" && pathParts.Length >= 4 && pathParts[2] is "tree")
         {
-            // Format: github.com/owner/repo/tree/commit-sha
-            return (
+            // Format: github.com/owner/repo/tree/commit-sha-or-branch
+            return new ParseTreeUrlResult(
                 $"{scheme}://{host}",
                 pathParts[0],
                 pathParts[1],
@@ -40,8 +49,8 @@ public static class GitSmartHttp
         }
         else if (host is "gitlab.com" && pathParts.Length >= 5 && pathParts[2] is "-" && pathParts[3] is "tree")
         {
-            // Format: gitlab.com/owner/repo/-/tree/commit-sha
-            return (
+            // Format: gitlab.com/owner/repo/-/tree/commit-sha-or-branch
+            return new ParseTreeUrlResult(
                 $"{scheme}://{host}",
                 pathParts[0],
                 pathParts[1],
@@ -96,6 +105,54 @@ public static class GitSmartHttp
 
         // Parse the response to extract the pack file
         return ExtractPackFileFromResponse(responseData);
+    }
+
+    /// <summary>
+    /// Fetches the commit SHA for a given branch from the remote repository.
+    /// </summary>
+    /// <param name="baseUrl">Base URL like https://github.com</param>
+    /// <param name="owner">Repository owner</param>
+    /// <param name="repo">Repository name</param>
+    /// <param name="branch">Branch name</param>
+    /// <returns>Commit SHA for the branch</returns>
+    public static async Task<string> FetchBranchCommitShaAsync(
+        string baseUrl,
+        string owner,
+        string repo,
+        string branch)
+    {
+        var gitUrl = $"{baseUrl}/{owner}/{repo}.git";
+        var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
+
+        using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
+        using var refsResponse = await s_httpClient.SendAsync(refsRequest);
+        refsResponse.EnsureSuccessStatusCode();
+
+        var responseData = await refsResponse.Content.ReadAsByteArrayAsync();
+        var responseText = Encoding.UTF8.GetString(responseData);
+
+        // Parse pkt-line format to find the ref
+        var refName = $"refs/heads/{branch}";
+        var lines = responseText.Split('\n');
+
+        foreach (var line in lines)
+        {
+            if (line.Length > 44 && line.Contains(refName))
+            {
+                // Extract SHA from the line
+                // Format: <4-char-length><40-char-sha><space><ref-name>...
+                // Skip the first 4 chars (length prefix)
+                var sha = line.Substring(4, 40);
+                var rest = line.Substring(44).Trim();
+                
+                if (rest.StartsWith(refName))
+                {
+                    return sha;
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"Branch {branch} not found in repository {owner}/{repo}");
     }
 
     private static byte[] BuildUploadPackRequest(string commitSha)
