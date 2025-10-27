@@ -265,60 +265,70 @@ public static class PackIndex
 
     private static int FindCompressedLength(ReadOnlySpan<byte> packData, int offset, int expectedDecompressedSize)
     {
-        // Start with a reasonable estimate and grow it exponentially until we can successfully decompress
-        var testLength = Math.Min(100, packData.Length - offset);
+        // Binary search for the minimum compressed length that allows full decompression
+        var minLength = 1;
         var maxLength = packData.Length - offset;
-        var increment = 100;
+        var workingLength = -1;
         
-        while (testLength <= maxLength)
+        // First, find if max length works at all
+        if (!TryDecompress(packData, offset, maxLength, expectedDecompressedSize))
         {
-            try
+            throw new InvalidOperationException($"Cannot decompress object at offset {offset} even with full remaining data");
+        }
+        
+        // Binary search for minimum working length
+        while (minLength <= maxLength)
+        {
+            var mid = minLength + (maxLength - minLength) / 2;
+            
+            if (TryDecompress(packData, offset, mid, expectedDecompressedSize))
             {
-                using var memStream = new System.IO.MemoryStream(packData.Slice(offset, testLength).ToArray(), false);
-                using var zlibStream = new System.IO.Compression.ZLibStream(memStream, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
-                
-                var buffer = new byte[expectedDecompressedSize];
-                var totalRead = 0;
-                
-                while (totalRead < expectedDecompressedSize)
-                {
-                    var read = zlibStream.Read(buffer, totalRead, expectedDecompressedSize - totalRead);
-                    if (read == 0)
-                    {
-                        // Not enough data, try larger
-                        break;
-                    }
-                    totalRead += read;
-                }
-                
-                if (totalRead == expectedDecompressedSize)
-                {
-                    // Success! Now find the actual number of bytes consumed
-                    // The MemoryStream.Position tells us how many bytes were read
-                    var consumed = (int)memStream.Position;
-                    return consumed;
-                }
-                
-                // Didn't get enough data, increase test length
-                testLength += increment;
-                // Grow increment exponentially for large objects
-                if (testLength > 1000)
-                {
-                    increment = Math.Min(1000, increment * 2);
-                }
+                // This length works, try smaller
+                workingLength = mid;
+                maxLength = mid - 1;
             }
-            catch
+            else
             {
-                // Decompression failed, try larger length
-                testLength += increment;
-                if (testLength > 1000)
-                {
-                    increment = Math.Min(1000, increment * 2);
-                }
+                // This length doesn't work, need longer
+                minLength = mid + 1;
             }
         }
         
-        throw new InvalidOperationException($"Could not find compressed length for object at offset {offset}");
+        if (workingLength == -1)
+        {
+            throw new InvalidOperationException($"Could not find compressed length for object at offset {offset}");
+        }
+        
+        return workingLength;
+    }
+    
+    private static bool TryDecompress(ReadOnlySpan<byte> packData, int offset, int compressedLength, int expectedSize)
+    {
+        try
+        {
+            var testData = packData.Slice(offset, compressedLength).ToArray();
+            using var memStream = new System.IO.MemoryStream(testData);
+            using var zlibStream = new System.IO.Compression.ZLibStream(memStream, System.IO.Compression.CompressionMode.Decompress);
+            
+            var buffer = new byte[expectedSize];
+            var totalRead = 0;
+            
+            while (totalRead < expectedSize)
+            {
+                var read = zlibStream.Read(buffer, totalRead, expectedSize - totalRead);
+                if (read == 0)
+                {
+                    return false; // Couldn't read enough
+                }
+                totalRead += read;
+            }
+            
+            return totalRead == expectedSize;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // Removed ByteTrackingStream class as we're using a simpler approach
