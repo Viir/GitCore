@@ -26,7 +26,7 @@ public static class PackFile
         ObjectType Type,
         long Size,
         ReadOnlyMemory<byte> Data,
-        string SHA1);
+        string SHA1base16);
 
     public static PackFileHeader ParsePackFileHeader(ReadOnlyMemory<byte> packFileData)
     {
@@ -81,7 +81,9 @@ public static class PackFile
         return storedChecksum.Span.SequenceEqual(calculatedChecksum);
     }
 
-    public static IReadOnlyList<PackObject> ParseAllObjects(ReadOnlyMemory<byte> packFileData, IReadOnlyList<PackIndex.IndexEntry> indexEntries)
+    public static IReadOnlyList<PackObject> ParseAllObjects(
+        ReadOnlyMemory<byte> packFileData,
+        IReadOnlyList<PackIndex.IndexEntry> indexEntries)
     {
         var header = ParsePackFileHeader(packFileData);
         var objects = new List<PackObject>();
@@ -108,9 +110,9 @@ public static class PackFile
             var packObject = ParseObjectAtWithSize(dataWithoutChecksum, offset, compressedSize);
 
             // Verify SHA1 matches
-            if (packObject.SHA1 != entry.SHA1)
+            if (packObject.SHA1base16 != entry.SHA1base16)
             {
-                throw new InvalidOperationException($"SHA1 mismatch: expected {entry.SHA1}, got {packObject.SHA1}");
+                throw new InvalidOperationException($"SHA1 mismatch: expected {entry.SHA1base16}, got {packObject.SHA1base16}");
             }
 
             objects.Add(packObject);
@@ -170,6 +172,6 @@ public static class PackFile
 
     public static IReadOnlyDictionary<string, PackObject> GetObjectsBySHA1(IReadOnlyList<PackObject> objects)
     {
-        return objects.ToDictionary(obj => obj.SHA1, obj => obj);
+        return objects.ToDictionary(obj => obj.SHA1base16, obj => obj);
     }
 }

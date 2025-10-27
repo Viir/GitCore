@@ -15,11 +15,11 @@ public static class PackIndex
     /// Represents a single entry in a pack index file.
     /// </summary>
     /// <param name="Offset">The byte offset of the packed object within the pack file.</param>
-    /// <param name="SHA1">The object identifier as a40-character lowercase hexadecimal SHA-1 string.</param>
+    /// <param name="SHA1base16">The object identifier as a40-character lowercase hexadecimal SHA-1 string.</param>
     /// <param name="CRC32">The CRC-32 checksum of the packed object data as stored in the pack.</param>
     public record IndexEntry(
         long Offset,
-        string SHA1,
+        string SHA1base16,
         uint CRC32);
 
     /// <summary>
