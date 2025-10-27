@@ -87,7 +87,7 @@ public class LoadFromUrl
         foreach (var obj in sortedObjects)
         {
             var firstByte = Convert.FromHexString(obj.sha1.Substring(0, 2))[0];
-            for (var i = firstByte; i < 256; i++)
+            for (var i = (int)firstByte; i < 256; i++)
             {
                 fanout[i]++;
             }
