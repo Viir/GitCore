@@ -14,6 +14,9 @@ namespace GitCore;
 public static class GitSmartHttp
 {
     private static readonly HttpClient HttpClient = new();
+    
+    // Git protocol capabilities we request when fetching pack files
+    private const string GitProtocolCapabilities = "multi_ack_detailed side-band-64k ofs-delta";
 
     /// <summary>
     /// Parses a GitHub or GitLab tree URL to extract repository information and commit SHA.
@@ -101,8 +104,8 @@ public static class GitSmartHttp
     {
         using var ms = new MemoryStream();
         
-        // Want line: want <sha> multi_ack_detailed side-band-64k thin-pack ofs-delta
-        var wantLine = $"want {commitSha} multi_ack_detailed side-band-64k ofs-delta\n";
+        // Want line: want <sha> <capabilities>
+        var wantLine = $"want {commitSha} {GitProtocolCapabilities}\n";
         WritePktLine(ms, wantLine);
         
         // Flush packet
