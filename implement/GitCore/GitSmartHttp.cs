@@ -78,6 +78,24 @@ public static class GitSmartHttp
         string commitSha)
     {
         var gitUrl = $"{baseUrl}/{owner}/{repo}.git";
+        return await FetchPackFileAsync(gitUrl, commitSha);
+    }
+
+    /// <summary>
+    /// Fetches a pack file containing the specified commit and its tree from a remote repository.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="commitSha">Commit SHA to fetch</param>
+    /// <returns>Pack file data</returns>
+    public static async Task<ReadOnlyMemory<byte>> FetchPackFileAsync(
+        string gitUrl,
+        string commitSha)
+    {
+        // Ensure the URL ends with .git
+        if (!gitUrl.EndsWith(".git"))
+        {
+            gitUrl = $"{gitUrl}.git";
+        }
 
         // Step 1: Discover refs (optional but following protocol)
         var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";

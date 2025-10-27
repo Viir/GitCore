@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using System;
 using System.Linq;
 using Xunit;
 
@@ -47,15 +48,38 @@ public class LoadFromGitHubTests
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "c3135b803587ce0b4bf8f04f089f58ca4f27015c";
 
-        // Convert repository URL to tree URL format
-        // Remove .git suffix and add /tree/ path
-        var baseUrl = repositoryUrl.EndsWith(".git") 
-            ? repositoryUrl[..^4] 
-            : repositoryUrl;
-        var treeUrl = $"{baseUrl}/tree/{commitSha}";
+        // Fetch the pack file directly using the git URL
+        var packFileData =
+            GitSmartHttp.FetchPackFileAsync(repositoryUrl, commitSha)
+            .GetAwaiter()
+            .GetResult();
 
-        // Load the tree contents
-        var treeContents = LoadFromUrl.LoadTreeContentsFromUrl(treeUrl);
+        // Generate index for the pack file
+        var indexResult = PackIndex.GeneratePackIndexV2(packFileData);
+        var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);
+
+        // Parse all objects from the pack file
+        var objects = PackFile.ParseAllObjects(packFileData, indexEntries);
+        var objectsBySHA1 = PackFile.GetObjectsBySHA1(objects);
+
+        // Get the commit object
+        if (!objectsBySHA1.TryGetValue(commitSha, out var commitObject))
+        {
+            throw new InvalidOperationException($"Commit {commitSha} not found in pack file");
+        }
+
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
+        {
+            throw new InvalidOperationException($"Object {commitSha} is not a commit");
+        }
+
+        // Parse the commit to get the tree SHA
+        var commit = GitObjects.ParseCommit(commitObject.Data);
+
+        // Get all files from the tree recursively
+        var treeContents = GitObjects.GetAllFilesFromTree(
+            commit.TreeSHA1,
+            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
 
         // Verify that the tree was loaded successfully
         treeContents.Should().NotBeNull("Tree should be loaded");
