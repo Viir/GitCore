@@ -70,15 +70,17 @@ public static class GitSmartHttp
     /// <param name="owner">Repository owner</param>
     /// <param name="repo">Repository name</param>
     /// <param name="commitSha">Commit SHA to fetch</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
     /// <returns>Pack file data</returns>
     public static async Task<ReadOnlyMemory<byte>> FetchPackFileAsync(
         string baseUrl,
         string owner,
         string repo,
-        string commitSha)
+        string commitSha,
+        HttpClient? httpClient = null)
     {
         var gitUrl = $"{baseUrl}/{owner}/{repo}.git";
-        return await FetchPackFileAsync(gitUrl, commitSha);
+        return await FetchPackFileAsync(gitUrl, commitSha, httpClient);
     }
 
     /// <summary>
@@ -86,11 +88,15 @@ public static class GitSmartHttp
     /// </summary>
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
     /// <param name="commitSha">Commit SHA to fetch</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
     /// <returns>Pack file data</returns>
     public static async Task<ReadOnlyMemory<byte>> FetchPackFileAsync(
         string gitUrl,
-        string commitSha)
+        string commitSha,
+        HttpClient? httpClient = null)
     {
+        httpClient ??= s_httpClient;
+
         // Ensure the URL ends with .git
         if (!gitUrl.EndsWith(".git"))
         {
@@ -101,7 +107,7 @@ public static class GitSmartHttp
         var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
 
         using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
-        using var refsResponse = await s_httpClient.SendAsync(refsRequest);
+        using var refsResponse = await httpClient.SendAsync(refsRequest);
 
         refsResponse.EnsureSuccessStatusCode();
 
@@ -119,7 +125,7 @@ public static class GitSmartHttp
         packRequest.Content.Headers.ContentType =
             new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
 
-        using var packResponse = await s_httpClient.SendAsync(packRequest);
+        using var packResponse = await httpClient.SendAsync(packRequest);
 
         packResponse.EnsureSuccessStatusCode();
 
@@ -136,18 +142,22 @@ public static class GitSmartHttp
     /// <param name="owner">Repository owner</param>
     /// <param name="repo">Repository name</param>
     /// <param name="branch">Branch name</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
     /// <returns>Commit SHA for the branch</returns>
     public static async Task<string> FetchBranchCommitShaAsync(
         string baseUrl,
         string owner,
         string repo,
-        string branch)
+        string branch,
+        HttpClient? httpClient = null)
     {
+        httpClient ??= s_httpClient;
+
         var gitUrl = $"{baseUrl}/{owner}/{repo}.git";
         var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
 
         using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
-        using var refsResponse = await s_httpClient.SendAsync(refsRequest);
+        using var refsResponse = await httpClient.SendAsync(refsRequest);
         refsResponse.EnsureSuccessStatusCode();
 
         var responseData = await refsResponse.Content.ReadAsByteArrayAsync();
