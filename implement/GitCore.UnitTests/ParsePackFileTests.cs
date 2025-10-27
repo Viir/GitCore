@@ -66,6 +66,27 @@ public class ParsePackFileTests
             "README.md content should match expected SHA256 hash");
     }
 
+    [Fact]
+    public void Generate_idx_and_rev_files_from_pack_file()
+    {
+        var filesFromClone = LoadTestDataFiles_2025_10_27();
+
+        var packFileData = filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.pack"]];
+        var expectedIdxFileData = filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.idx"]];
+        var expectedRevFileData = filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.rev"]];
+
+        // Generate idx and rev files from pack file
+        var result = PackIndex.GeneratePackIndexV2(packFileData);
+
+        // Verify the generated idx file matches the expected one
+        result.IndexData.Length.Should().Be(expectedIdxFileData.Length, "Generated .idx file should have the same size");
+        result.IndexData.Span.SequenceEqual(expectedIdxFileData.Span).Should().BeTrue("Generated .idx file should match expected content");
+
+        // Verify the generated rev file matches the expected one
+        result.ReverseIndexData.Length.Should().Be(expectedRevFileData.Length, "Generated .rev file should have the same size");
+        result.ReverseIndexData.Span.SequenceEqual(expectedRevFileData.Span).Should().BeTrue("Generated .rev file should match expected content");
+    }
+
     private static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTestDataFiles_2025_10_27()
     {
         var testDataDir =

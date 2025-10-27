@@ -144,7 +144,7 @@ public static class PackFile
 
         // Extract the compressed data
         var compressedData = packFileData.Slice(offset, compressedDataSize);
-        var decompressedData = DecompressZlibFixed(compressedData.Span, (int)size);
+        var decompressedData = DecompressZlib(compressedData.Span, (int)size);
 
         // Calculate SHA1 of the decompressed object
         var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{objectType.ToString().ToLower()} {size}\0");
@@ -157,7 +157,7 @@ public static class PackFile
         return new PackObject(objectType, size, decompressedData, sha1Hex);
     }
 
-    private static byte[] DecompressZlibFixed(ReadOnlySpan<byte> compressedData, int expectedSize)
+    public static byte[] DecompressZlib(ReadOnlySpan<byte> compressedData, int expectedSize)
     {
         using var inputStream = new System.IO.MemoryStream(compressedData.ToArray());
         using var zlibStream = new ZLibStream(inputStream, CompressionMode.Decompress);
