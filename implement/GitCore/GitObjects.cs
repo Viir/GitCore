@@ -129,7 +129,7 @@ public static class GitObjects
             throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
         }
 
-        if (treeObject.Type != PackFile.ObjectType.Tree)
+        if (treeObject.Type is not PackFile.ObjectType.Tree)
         {
             throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
         }
@@ -142,13 +142,13 @@ public static class GitObjects
             {
                 if (objectsBySHA1.TryGetValue(entry.SHA1, out var blobObject))
                 {
-                    if (blobObject.Type == PackFile.ObjectType.Blob)
+                    if (blobObject.Type is PackFile.ObjectType.Blob)
                     {
                         files[entry.Name] = GetBlobContent(blobObject.Data);
                     }
                 }
             }
-            else if (entry.Mode == "40000") // Directory
+            else if (entry.Mode is "40000") // Directory
             {
                 // For now, we'll skip subdirectories
                 // In a full implementation, we would recursively process them
@@ -166,7 +166,7 @@ public static class GitObjects
         var files = new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
             comparer: Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
 
-        pathPrefix ??= Array.Empty<string>();
+        pathPrefix ??= [];
 
         var treeObject = getObjectBySHA1(treeSHA1);
         if (treeObject is null)
@@ -174,7 +174,7 @@ public static class GitObjects
             throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
         }
 
-        if (treeObject.Type != PackFile.ObjectType.Tree)
+        if (treeObject.Type is not PackFile.ObjectType.Tree)
         {
             throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
         }
@@ -188,12 +188,12 @@ public static class GitObjects
             if (entry.Mode.StartsWith("100")) // Regular file
             {
                 var blobObject = getObjectBySHA1(entry.SHA1);
-                if (blobObject is not null && blobObject.Type == PackFile.ObjectType.Blob)
+                if (blobObject is not null && blobObject.Type is PackFile.ObjectType.Blob)
                 {
                     files[filePath] = GetBlobContent(blobObject.Data);
                 }
             }
-            else if (entry.Mode == "40000") // Directory
+            else if (entry.Mode is "40000") // Directory
             {
                 // Recursively process subdirectories
                 var subFiles = GetAllFilesFromTree(entry.SHA1, getObjectBySHA1, filePath);
@@ -230,7 +230,7 @@ public static class GitObjects
                 throw new InvalidOperationException($"Tree {currentTreeSHA1} not found");
             }
 
-            if (treeObject.Type != PackFile.ObjectType.Tree)
+            if (treeObject.Type is not PackFile.ObjectType.Tree)
             {
                 throw new InvalidOperationException($"Object {currentTreeSHA1} is not a tree");
             }
@@ -243,7 +243,7 @@ public static class GitObjects
                 throw new InvalidOperationException($"Path component '{pathComponent}' not found in tree");
             }
 
-            if (entry.Mode != "40000")
+            if (entry.Mode is not "40000")
             {
                 throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
             }
@@ -252,7 +252,7 @@ public static class GitObjects
         }
 
         // Now get all files from the subdirectory tree
-        return GetAllFilesFromTree(currentTreeSHA1, getObjectBySHA1, pathPrefix: Array.Empty<string>());
+        return GetAllFilesFromTree(currentTreeSHA1, getObjectBySHA1, pathPrefix: []);
     }
 
     public static ReadOnlyMemory<byte> GetFileFromCommit(
@@ -265,7 +265,7 @@ public static class GitObjects
             throw new InvalidOperationException($"Commit {commitSHA1} not found in pack file");
         }
 
-        if (commitObject.Type != PackFile.ObjectType.Commit)
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
         {
             throw new InvalidOperationException($"Object {commitSHA1} is not a commit");
         }
