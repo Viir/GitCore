@@ -41,6 +41,7 @@ public static class PackIndex
 
         // Check magic number (0xFF, 't', 'O', 'c')
         ReadOnlySpan<byte> expectedSignature = [0xFF, (byte)'t', (byte)'O', (byte)'c'];
+
         if (!span[..4].SequenceEqual(expectedSignature))
         {
             throw new ArgumentException("Invalid pack index signature");
@@ -48,7 +49,8 @@ public static class PackIndex
 
         // Check version
         var version = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
-        if (version != 2)
+
+        if (version is not 2)
         {
             throw new ArgumentException($"Unsupported pack index version: {version}");
         }
@@ -82,7 +84,7 @@ public static class PackIndex
             var offsetValue = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offsetTableOffset + i * 4, 4));
             long offset;
 
-            if ((offsetValue & 0x80000000) != 0)
+            if ((offsetValue & 0x80000000) is not 0)
             {
                 // 64-bit offset - not handling this for now
                 throw new NotImplementedException("64-bit offsets not yet supported");
@@ -148,7 +150,7 @@ public static class PackIndex
             long size = currentByte & 0xF;
             var shift = 4;
 
-            while ((currentByte & 0x80) != 0)
+            while ((currentByte & 0x80) is not 0)
             {
                 currentByte = span[offset++];
                 size |= (long)(currentByte & 0x7F) << shift;
@@ -156,26 +158,26 @@ public static class PackIndex
             }
 
             // Handle delta objects specially
-            if (objectType == PackFile.ObjectType.OfsDelta)
+            if (objectType is PackFile.ObjectType.OfsDelta)
             {
                 // OfsDelta: Skip the negative offset encoding
                 // Offset is encoded in variable-length format (we skip it since we're not reconstructing)
                 currentByte = span[offset++];
-                while ((currentByte & 0x80) != 0)
+                while ((currentByte & 0x80) is not 0)
                 {
                     currentByte = span[offset++];
                 }
-                
+
                 // Now follows the compressed delta data - skip it
                 var deltaCompressedLength = FindCompressedLength(span, offset, (int)size);
                 offset += deltaCompressedLength;
                 continue; // Skip adding this object to the index for now
             }
-            else if (objectType == PackFile.ObjectType.RefDelta)
+            else if (objectType is PackFile.ObjectType.RefDelta)
             {
                 // RefDelta: Skip the 20-byte SHA1 reference
                 offset += 20;
-                
+
                 // Now follows the compressed delta data - skip it
                 var refDeltaCompressedLength = FindCompressedLength(span, offset, (int)size);
                 offset += refDeltaCompressedLength;

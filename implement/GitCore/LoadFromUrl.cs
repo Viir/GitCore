@@ -22,6 +22,7 @@ public class LoadFromUrl
 
         // Determine if it's a commit SHA or branch name
         string commitSha;
+
         if (IsLikelyCommitSha(parsed.CommitShaOrBranch))
         {
             commitSha = parsed.CommitShaOrBranch;
@@ -29,17 +30,19 @@ public class LoadFromUrl
         else
         {
             // It's a branch name, resolve it to a commit SHA
-            commitSha = GitSmartHttp.FetchBranchCommitShaAsync(
-                parsed.BaseUrl, 
-                parsed.Owner, 
-                parsed.Repo, 
+            commitSha =
+                GitSmartHttp.FetchBranchCommitShaAsync(
+                parsed.BaseUrl,
+                parsed.Owner,
+                parsed.Repo,
                 parsed.CommitShaOrBranch)
                 .GetAwaiter()
                 .GetResult();
         }
 
         // Fetch the pack file containing the commit and its tree
-        var packFileData = GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha)
+        var packFileData =
+            GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha)
             .GetAwaiter()
             .GetResult();
 
@@ -67,7 +70,7 @@ public class LoadFromUrl
 
         // Get all files from the tree recursively
         return GitObjects.GetAllFilesFromTree(
-            commit.TreeSHA1, 
+            commit.TreeSHA1,
             sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
 
@@ -77,7 +80,7 @@ public class LoadFromUrl
     private static bool IsLikelyCommitSha(string value)
     {
         // Git commit SHAs are 40 hex characters
-        if (value.Length != 40)
+        if (value.Length is not 40)
             return false;
 
         foreach (var c in value)

@@ -84,6 +84,7 @@ public static class GitSmartHttp
 
         using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
         using var refsResponse = await s_httpClient.SendAsync(refsRequest);
+
         refsResponse.EnsureSuccessStatusCode();
 
         // Step 2: Request the pack file with the specific commit
@@ -96,9 +97,12 @@ public static class GitSmartHttp
         {
             Content = new ByteArrayContent(requestBody)
         };
-        packRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
+
+        packRequest.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
 
         using var packResponse = await s_httpClient.SendAsync(packRequest);
+
         packResponse.EnsureSuccessStatusCode();
 
         var responseData = await packResponse.Content.ReadAsByteArrayAsync();
@@ -143,8 +147,8 @@ public static class GitSmartHttp
                 // Format: <4-char-length><40-char-sha><space><ref-name>...
                 // Skip the first 4 chars (length prefix)
                 var sha = line.Substring(4, 40);
-                var rest = line.Substring(44).Trim();
-                
+                var rest = line[44..].Trim();
+
                 if (rest.StartsWith(refName))
                 {
                     return sha;
