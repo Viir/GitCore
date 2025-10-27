@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Net.Http;
+using System.Threading.Tasks;
 
 namespace GitCore;
 
@@ -11,11 +13,14 @@ using FilePath = IReadOnlyList<string>;
 public class LoadFromUrl
 {
     /// <summary>
-    /// Loads the contents of a Git tree from a GitHub or GitLab URL.
+    /// Loads the contents of a Git tree from a GitHub or GitLab URL asynchronously.
     /// </summary>
     /// <param name="url">A tree URL like https://github.com/owner/repo/tree/commit-sha or https://github.com/owner/repo/tree/branch</param>
+    /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default static client.</param>
     /// <returns>A dictionary mapping file paths to their contents</returns>
-    public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromUrl(string url)
+    public static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadTreeContentsFromUrlAsync(
+        string url,
+        HttpClient? httpClient = null)
     {
         // Parse the URL to extract repository information and commit SHA or branch
         var parsed = GitSmartHttp.ParseTreeUrl(url);
@@ -31,20 +36,46 @@ public class LoadFromUrl
         {
             // It's a branch name, resolve it to a commit SHA
             commitSha =
-                GitSmartHttp.FetchBranchCommitShaAsync(
+                await GitSmartHttp.FetchBranchCommitShaAsync(
                 parsed.BaseUrl,
                 parsed.Owner,
                 parsed.Repo,
-                parsed.CommitShaOrBranch)
-                .GetAwaiter()
-                .GetResult();
+                parsed.CommitShaOrBranch,
+                httpClient);
         }
 
         // Fetch the pack file containing the commit and its tree
         var packFileData =
-            GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha)
-            .GetAwaiter()
-            .GetResult();
+            await GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha, httpClient);
+
+        return LoadTreeContentsFromPackFile(packFileData, commitSha);
+    }
+
+    /// <summary>
+    /// Loads the contents of a Git tree from a GitHub or GitLab URL.
+    /// </summary>
+    /// <param name="url">A tree URL like https://github.com/owner/repo/tree/commit-sha or https://github.com/owner/repo/tree/branch</param>
+    /// <returns>A dictionary mapping file paths to their contents</returns>
+    public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromUrl(string url)
+    {
+        return LoadTreeContentsFromUrlAsync(url, null).GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Loads the contents of a Git tree from a Git repository URL and commit SHA asynchronously.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="commitSha">Commit SHA to load</param>
+    /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default static client.</param>
+    /// <returns>A dictionary mapping file paths to their contents</returns>
+    public static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadTreeContentsFromGitUrlAsync(
+        string gitUrl,
+        string commitSha,
+        HttpClient? httpClient = null)
+    {
+        // Fetch the pack file containing the commit and its tree
+        var packFileData =
+            await GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha, httpClient);
 
         return LoadTreeContentsFromPackFile(packFileData, commitSha);
     }
@@ -59,13 +90,7 @@ public class LoadFromUrl
         string gitUrl,
         string commitSha)
     {
-        // Fetch the pack file containing the commit and its tree
-        var packFileData =
-            GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha)
-            .GetAwaiter()
-            .GetResult();
-
-        return LoadTreeContentsFromPackFile(packFileData, commitSha);
+        return LoadTreeContentsFromGitUrlAsync(gitUrl, commitSha, null).GetAwaiter().GetResult();
     }
 
     /// <summary>

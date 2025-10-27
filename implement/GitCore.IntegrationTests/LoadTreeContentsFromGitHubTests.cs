@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using System.Linq;
+using System.Threading.Tasks;
 using Xunit;
 
 namespace GitCore.IntegrationTests;
@@ -7,10 +8,10 @@ namespace GitCore.IntegrationTests;
 public class LoadFromGitHubTests
 {
     [Fact]
-    public void Load_tree_at_root_via_commit()
+    public async Task Load_tree_at_root_via_commit()
     {
         var treeContents =
-            LoadFromUrl.LoadTreeContentsFromUrl(
+            await LoadFromUrl.LoadTreeContentsFromUrlAsync(
                 "https://github.com/Viir/GitCore/tree/14eb05f5beac67cdf2a229394baa626338a3d92e");
 
         var readmeFile = treeContents[["README.md"]];
@@ -23,10 +24,10 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
-    public void Load_tree_at_root_via_named_branch()
+    public async Task Load_tree_at_root_via_named_branch()
     {
         var treeContents =
-            LoadFromUrl.LoadTreeContentsFromUrl(
+            await LoadFromUrl.LoadTreeContentsFromUrlAsync(
                 "https://github.com/Viir/GitCore/tree/main");
 
         // Assert that README.md exists at the root
@@ -41,14 +42,14 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
-    public void Load_tree_from_repository_url_and_commit_sha()
+    public async Task Load_tree_from_repository_url_and_commit_sha()
     {
         // Test inputs: repository URL and commit SHA
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "c3135b803587ce0b4bf8f04f089f58ca4f27015c";
 
         // Load the tree contents using the git URL and commit SHA
-        var treeContents = LoadFromUrl.LoadTreeContentsFromGitUrl(repositoryUrl, commitSha);
+        var treeContents = await LoadFromUrl.LoadTreeContentsFromGitUrlAsync(repositoryUrl, commitSha);
 
         // Verify that the tree was loaded successfully
         treeContents.Should().NotBeNull("Tree should be loaded");
@@ -60,10 +61,50 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
+    public async Task Load_tree_with_custom_http_client_for_profiling()
+    {
+        // Create a custom HttpClient with a delegating handler to track requests
+        var requestCounter = new RequestCountingHandler(new System.Net.Http.SocketsHttpHandler());
+        using var httpClient = new System.Net.Http.HttpClient(requestCounter);
+
+        var repositoryUrl = "https://github.com/Viir/GitCore.git";
+        var commitSha = "c3135b803587ce0b4bf8f04f089f58ca4f27015c";
+
+        // Load the tree contents using a custom HttpClient
+        var treeContents = await LoadFromUrl.LoadTreeContentsFromGitUrlAsync(repositoryUrl, commitSha, httpClient);
+
+        // Verify that the tree was loaded successfully
+        treeContents.Should().NotBeNull("Tree should be loaded");
+        treeContents.Count.Should().BeGreaterThan(0, "Tree should contain files");
+
+        // Verify that HTTP requests were made (for profiling purposes)
+        requestCounter.RequestCount.Should().BeGreaterThan(0, "HTTP requests should have been made");
+    }
+
+    [Fact]
     public void Placeholder()
     {
         /*
          * Avoid "Zero tests ran" error in CI as long as there are no real tests yet.
          * */
+    }
+
+    // Helper class for tracking HTTP requests
+    private class RequestCountingHandler : System.Net.Http.DelegatingHandler
+    {
+        public int RequestCount { get; private set; }
+
+        public RequestCountingHandler(System.Net.Http.HttpMessageHandler innerHandler)
+            : base(innerHandler)
+        {
+        }
+
+        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            RequestCount++;
+            return await base.SendAsync(request, cancellationToken);
+        }
     }
 }
