@@ -5,7 +5,7 @@ namespace GitCore.IntegrationTests;
 
 public class LoadFromGitHubTests
 {
-    [Fact(Skip = "TODO: Implement productive side")]
+    [Fact]
     public void Load_tree_at_root_via_commit()
     {
         var treeContents =
