@@ -66,7 +66,9 @@ public class LoadFromUrl
         var commit = GitObjects.ParseCommit(commitObject.Data);
 
         // Get all files from the tree recursively
-        return GitObjects.GetAllFilesFromTree(commit.TreeSHA1, objectsBySHA1);
+        return GitObjects.GetAllFilesFromTree(
+            commit.TreeSHA1, 
+            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
 
     /// <summary>
