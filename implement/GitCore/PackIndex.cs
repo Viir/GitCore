@@ -158,32 +158,25 @@ public static class PackIndex
             // Handle delta objects specially
             if (objectType == PackFile.ObjectType.OfsDelta)
             {
-                // OfsDelta: Read the offset encoding
-                // Negative offset encoded in variable-length format
-                long deltaOffset = 0;
+                // OfsDelta: Skip the negative offset encoding
+                // Offset is encoded in variable-length format (we skip it since we're not reconstructing)
                 currentByte = span[offset++];
-                deltaOffset = currentByte & 0x7F;
-                
                 while ((currentByte & 0x80) != 0)
                 {
-                    deltaOffset++;
                     currentByte = span[offset++];
-                    deltaOffset = (deltaOffset << 7) + (currentByte & 0x7F);
                 }
                 
-                // Now follows the compressed delta data
-                // For now, skip delta reconstruction and just skip this object
-                // We'll need to implement delta reconstruction to properly support this
+                // Now follows the compressed delta data - skip it
                 var deltaCompressedLength = FindCompressedLength(span, offset, (int)size);
                 offset += deltaCompressedLength;
                 continue; // Skip adding this object to the index for now
             }
             else if (objectType == PackFile.ObjectType.RefDelta)
             {
-                // RefDelta: Read the 20-byte SHA1 reference
-                offset += 20; // Skip SHA1
+                // RefDelta: Skip the 20-byte SHA1 reference
+                offset += 20;
                 
-                // Now follows the compressed delta data
+                // Now follows the compressed delta data - skip it
                 var refDeltaCompressedLength = FindCompressedLength(span, offset, (int)size);
                 offset += refDeltaCompressedLength;
                 continue; // Skip adding this object to the index for now

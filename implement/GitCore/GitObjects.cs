@@ -198,7 +198,7 @@ public static class GitObjects
             {
                 // Recursively process subdirectories
                 // Skip if the subtree is not available (e.g., stored as a delta that wasn't reconstructed)
-                if (objectsBySHA1.ContainsKey(entry.SHA1))
+                if (objectsBySHA1.TryGetValue(entry.SHA1, out var subTreeObject) && subTreeObject.Type == PackFile.ObjectType.Tree)
                 {
                     var subFiles = GetAllFilesFromTree(entry.SHA1, objectsBySHA1, filePath);
                     foreach (var (subPath, content) in subFiles)
