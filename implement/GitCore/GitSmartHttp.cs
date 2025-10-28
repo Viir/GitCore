@@ -222,37 +222,8 @@ public static class GitSmartHttp
         string commitSha,
         HttpClient? httpClient = null)
     {
-        httpClient ??= s_httpClient;
-
-        // Ensure the URL ends with .git
-        if (!gitUrl.EndsWith(".git"))
-        {
-            gitUrl = $"{gitUrl}.git";
-        }
-
-        // Step 1: Discover refs
-        var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
-        using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
-        using var refsResponse = await httpClient.SendAsync(refsRequest);
-        refsResponse.EnsureSuccessStatusCode();
-
-        // Step 2: Request blobless pack file with filter=blob:none
-        var uploadPackUrl = $"{gitUrl}/git-upload-pack";
-        var requestBody = BuildUploadPackRequestWithFilter(commitSha, shallowDepth: 1, filter: "blob:none");
-
-        using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
-        {
-            Content = new ByteArrayContent(requestBody)
-        };
-
-        packRequest.Content.Headers.ContentType =
-            new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
-
-        using var packResponse = await httpClient.SendAsync(packRequest);
-        packResponse.EnsureSuccessStatusCode();
-
-        var responseData = await packResponse.Content.ReadAsByteArrayAsync();
-        return ExtractPackFileFromResponse(responseData);
+        var requestBody = BuildUploadPackRequest(commitSha, shallowDepth: 1, filter: "blob:none");
+        return await FetchPackFileWithRequestBodyAsync(gitUrl, requestBody, httpClient);
     }
 
     /// <summary>
@@ -267,6 +238,18 @@ public static class GitSmartHttp
         IReadOnlyList<string> objectShas,
         HttpClient? httpClient = null)
     {
+        var requestBody = BuildUploadPackRequestForSpecificObjects(objectShas);
+        return await FetchPackFileWithRequestBodyAsync(gitUrl, requestBody, httpClient);
+    }
+
+    /// <summary>
+    /// Common helper for fetching pack files with a prepared request body.
+    /// </summary>
+    private static async Task<ReadOnlyMemory<byte>> FetchPackFileWithRequestBodyAsync(
+        string gitUrl,
+        byte[] requestBody,
+        HttpClient? httpClient)
+    {
         httpClient ??= s_httpClient;
 
         // Ensure the URL ends with .git
@@ -281,9 +264,8 @@ public static class GitSmartHttp
         using var refsResponse = await httpClient.SendAsync(refsRequest);
         refsResponse.EnsureSuccessStatusCode();
 
-        // Step 2: Request specific objects
+        // Step 2: Request pack file
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
-        var requestBody = BuildUploadPackRequestForSpecificObjects(objectShas);
 
         using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
         {
@@ -300,7 +282,7 @@ public static class GitSmartHttp
         return ExtractPackFileFromResponse(responseData);
     }
 
-    private static byte[] BuildUploadPackRequest(string commitSha, int? shallowDepth = null)
+    private static byte[] BuildUploadPackRequest(string commitSha, int? shallowDepth = null, string? filter = null)
     {
         using var ms = new MemoryStream();
 
@@ -309,6 +291,10 @@ public static class GitSmartHttp
         if (shallowDepth.HasValue)
         {
             capabilities = $"{capabilities} shallow";
+        }
+        if (filter != null)
+        {
+            capabilities = $"{capabilities} filter";
         }
         
         var wantLine = $"want {commitSha} {capabilities}\n";
@@ -319,6 +305,13 @@ public static class GitSmartHttp
         {
             var shallowLine = $"deepen {shallowDepth.Value}\n";
             WritePktLine(ms, shallowLine);
+        }
+
+        // For filtered fetches, specify the filter
+        if (filter != null)
+        {
+            var filterLine = $"filter {filter}\n";
+            WritePktLine(ms, filterLine);
         }
 
         // Flush packet
@@ -345,47 +338,6 @@ public static class GitSmartHttp
             stream.Write(Encoding.UTF8.GetBytes(lengthHex));
             stream.Write(lineBytes);
         }
-    }
-
-    private static byte[] BuildUploadPackRequestWithFilter(string commitSha, int? shallowDepth = null, string? filter = null)
-    {
-        using var ms = new MemoryStream();
-
-        // Want line: want <sha> <capabilities>
-        var capabilities = GitProtocolCapabilities;
-        if (shallowDepth.HasValue)
-        {
-            capabilities = $"{capabilities} shallow";
-        }
-        if (filter != null)
-        {
-            capabilities = $"{capabilities} filter";
-        }
-
-        var wantLine = $"want {commitSha} {capabilities}\n";
-        WritePktLine(ms, wantLine);
-
-        // For shallow clones, request specific depth
-        if (shallowDepth.HasValue)
-        {
-            var shallowLine = $"deepen {shallowDepth.Value}\n";
-            WritePktLine(ms, shallowLine);
-        }
-
-        // For filtered fetches, specify the filter
-        if (filter != null)
-        {
-            var filterLine = $"filter {filter}\n";
-            WritePktLine(ms, filterLine);
-        }
-
-        // Flush packet
-        WritePktLine(ms, null);
-
-        // Done line
-        WritePktLine(ms, "done\n");
-
-        return ms.ToArray();
     }
 
     private static byte[] BuildUploadPackRequestForSpecificObjects(IReadOnlyList<string> objectShas)
