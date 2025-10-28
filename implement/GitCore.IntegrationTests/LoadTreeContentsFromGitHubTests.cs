@@ -194,23 +194,18 @@ public class LoadFromGitHubTests
         System.Console.WriteLine($"  Compression Ratio: {(double)totalBytesReceived / subtreeAggregateFileContentSize:F2}x");
 
         // Assert bounds on data transfer
-        // The entire bots repository is large, but we're only requesting a subdirectory
-        // We expect the data transfer to be optimized by using Git's smart HTTP protocol
-        // which should only transfer the objects needed for this subdirectory
-
-        // Based on the Git protocol, we expect:
-        // 1. A request to info/refs (small, ~few KB)
-        // 2. A request to git-upload-pack with the pack file response
-        // The pack file should contain only the commit, trees, and blobs for the subdirectory
+        // With blobless clone optimization, we:
+        // 1. Fetch commit + trees only (blobless pack file)
+        // 2. Navigate to subdirectory and identify needed blobs
+        // 3. Fetch only those specific blobs
+        // This results in significantly less data transfer compared to fetching all files
 
         requestCount.Should().BeLessThan(10, "Should not make excessive HTTP requests");
 
-        // Set a reasonable upper bound for data transfer, considering the subdirectory size
-        // For a subdirectory with a few files, we expect this to be much less than downloading
-        // the entire repository. The pack file contains compressed data plus overhead for
-        // commit, tree objects, and pack file headers. A factor of 7.5x with additional overhead
-        // provides a reasonable bound while still ensuring optimization.
-        var maxExpectedBytes = (long)(subtreeAggregateFileContentSize * 7.5) + 150_000;
+        // Set a reasonable upper bound for data transfer with blobless optimization
+        // We expect data transfer to be close to the actual content size plus some overhead
+        // for trees, commit, and pack file headers. A factor of 0.5x (50% overhead) is reasonable.
+        var maxExpectedBytes = (long)(subtreeAggregateFileContentSize * 1.5);
 
         totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
             $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");

@@ -210,6 +210,96 @@ public static class GitSmartHttp
         throw new InvalidOperationException($"Branch {branch} not found in repository {owner}/{repo}");
     }
 
+    /// <summary>
+    /// Fetches a blobless pack file (commit and trees only, no blobs) for optimized subdirectory loading.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="commitSha">Commit SHA to fetch</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
+    /// <returns>Pack file data containing commit and trees but no blobs</returns>
+    public static async Task<ReadOnlyMemory<byte>> FetchBloblessPackFileAsync(
+        string gitUrl,
+        string commitSha,
+        HttpClient? httpClient = null)
+    {
+        httpClient ??= s_httpClient;
+
+        // Ensure the URL ends with .git
+        if (!gitUrl.EndsWith(".git"))
+        {
+            gitUrl = $"{gitUrl}.git";
+        }
+
+        // Step 1: Discover refs
+        var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
+        using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
+        using var refsResponse = await httpClient.SendAsync(refsRequest);
+        refsResponse.EnsureSuccessStatusCode();
+
+        // Step 2: Request blobless pack file with filter=blob:none
+        var uploadPackUrl = $"{gitUrl}/git-upload-pack";
+        var requestBody = BuildUploadPackRequestWithFilter(commitSha, shallowDepth: 1, filter: "blob:none");
+
+        using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
+        {
+            Content = new ByteArrayContent(requestBody)
+        };
+
+        packRequest.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
+
+        using var packResponse = await httpClient.SendAsync(packRequest);
+        packResponse.EnsureSuccessStatusCode();
+
+        var responseData = await packResponse.Content.ReadAsByteArrayAsync();
+        return ExtractPackFileFromResponse(responseData);
+    }
+
+    /// <summary>
+    /// Fetches specific Git objects by their SHAs.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="objectShas">List of object SHAs to fetch</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
+    /// <returns>Pack file data containing the requested objects</returns>
+    public static async Task<ReadOnlyMemory<byte>> FetchSpecificObjectsAsync(
+        string gitUrl,
+        IReadOnlyList<string> objectShas,
+        HttpClient? httpClient = null)
+    {
+        httpClient ??= s_httpClient;
+
+        // Ensure the URL ends with .git
+        if (!gitUrl.EndsWith(".git"))
+        {
+            gitUrl = $"{gitUrl}.git";
+        }
+
+        // Step 1: Discover refs
+        var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
+        using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
+        using var refsResponse = await httpClient.SendAsync(refsRequest);
+        refsResponse.EnsureSuccessStatusCode();
+
+        // Step 2: Request specific objects
+        var uploadPackUrl = $"{gitUrl}/git-upload-pack";
+        var requestBody = BuildUploadPackRequestForSpecificObjects(objectShas);
+
+        using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
+        {
+            Content = new ByteArrayContent(requestBody)
+        };
+
+        packRequest.Content.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
+
+        using var packResponse = await httpClient.SendAsync(packRequest);
+        packResponse.EnsureSuccessStatusCode();
+
+        var responseData = await packResponse.Content.ReadAsByteArrayAsync();
+        return ExtractPackFileFromResponse(responseData);
+    }
+
     private static byte[] BuildUploadPackRequest(string commitSha, int? shallowDepth = null)
     {
         using var ms = new MemoryStream();
@@ -255,6 +345,68 @@ public static class GitSmartHttp
             stream.Write(Encoding.UTF8.GetBytes(lengthHex));
             stream.Write(lineBytes);
         }
+    }
+
+    private static byte[] BuildUploadPackRequestWithFilter(string commitSha, int? shallowDepth = null, string? filter = null)
+    {
+        using var ms = new MemoryStream();
+
+        // Want line: want <sha> <capabilities>
+        var capabilities = GitProtocolCapabilities;
+        if (shallowDepth.HasValue)
+        {
+            capabilities = $"{capabilities} shallow";
+        }
+        if (filter != null)
+        {
+            capabilities = $"{capabilities} filter";
+        }
+
+        var wantLine = $"want {commitSha} {capabilities}\n";
+        WritePktLine(ms, wantLine);
+
+        // For shallow clones, request specific depth
+        if (shallowDepth.HasValue)
+        {
+            var shallowLine = $"deepen {shallowDepth.Value}\n";
+            WritePktLine(ms, shallowLine);
+        }
+
+        // For filtered fetches, specify the filter
+        if (filter != null)
+        {
+            var filterLine = $"filter {filter}\n";
+            WritePktLine(ms, filterLine);
+        }
+
+        // Flush packet
+        WritePktLine(ms, null);
+
+        // Done line
+        WritePktLine(ms, "done\n");
+
+        return ms.ToArray();
+    }
+
+    private static byte[] BuildUploadPackRequestForSpecificObjects(IReadOnlyList<string> objectShas)
+    {
+        using var ms = new MemoryStream();
+
+        // Request each object with want lines
+        for (int i = 0; i < objectShas.Count; i++)
+        {
+            var capabilities = i == 0 ? $" {GitProtocolCapabilities}" : "";
+            var wantLine = $"want {objectShas[i]}{capabilities}\n";
+            WritePktLine(ms, wantLine);
+        }
+
+        // Flush packet
+        WritePktLine(ms, null);
+
+        // Done line
+        WritePktLine(ms, "done\n");
+
+        return ms.ToArray();
     }
 
     private static ReadOnlyMemory<byte> ExtractPackFileFromResponse(byte[] responseData)

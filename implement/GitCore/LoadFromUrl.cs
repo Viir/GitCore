@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
 
@@ -100,18 +101,19 @@ public class LoadFromUrl
     /// <param name="commitSha">Commit SHA to load</param>
     /// <param name="subdirectoryPath">Path to the subdirectory (e.g., ["implement", "GitCore"])</param>
     /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default static client.</param>
+    /// <param name="getBlobFromCache">Optional delegate to retrieve a blob from cache by SHA. Returns null if not in cache.</param>
+    /// <param name="storeBlobInCache">Optional delegate to store a blob in cache with its SHA and content.</param>
     /// <returns>A dictionary mapping file paths (relative to subdirectory) to their contents</returns>
     public static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadSubdirectoryContentsFromGitUrlAsync(
         string gitUrl,
         string commitSha,
         FilePath subdirectoryPath,
-        HttpClient? httpClient = null)
+        HttpClient? httpClient = null,
+        Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache = null,
+        Action<string, ReadOnlyMemory<byte>>? storeBlobInCache = null)
     {
-        // Fetch the pack file containing only objects needed for this subdirectory
-        var packFileData =
-            await GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha, subdirectoryPath, httpClient);
-
-        return LoadSubdirectoryContentsFromPackFile(packFileData, commitSha, subdirectoryPath);
+        return await LoadSubdirectoryContentsWithBloblessCloneAsync(
+            gitUrl, commitSha, subdirectoryPath, httpClient, getBlobFromCache, storeBlobInCache);
     }
 
     /// <summary>
@@ -206,6 +208,196 @@ public class LoadFromUrl
             commit.TreeSHA1,
             subdirectoryPath,
             sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+    }
+
+    /// <summary>
+    /// Loads subdirectory contents using blobless clone optimization.
+    /// First fetches only trees and commit, then requests specific blobs for the subdirectory.
+    /// </summary>
+    private static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadSubdirectoryContentsWithBloblessCloneAsync(
+        string gitUrl,
+        string commitSha,
+        FilePath subdirectoryPath,
+        HttpClient? httpClient,
+        Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache,
+        Action<string, ReadOnlyMemory<byte>>? storeBlobInCache)
+    {
+        // Step 1: Fetch blobless pack file (commit and trees only)
+        var bloblessPackFileData =
+            await GitSmartHttp.FetchBloblessPackFileAsync(gitUrl, commitSha, httpClient);
+
+        // Parse the blobless pack file
+        var indexResult = PackIndex.GeneratePackIndexV2(bloblessPackFileData);
+        var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);
+        var objects = PackFile.ParseAllObjects(bloblessPackFileData, indexEntries);
+        var objectsBySHA1 = new Dictionary<string, PackFile.PackObject>(PackFile.GetObjectsBySHA1(objects));
+
+        // Get the commit object
+        if (!objectsBySHA1.TryGetValue(commitSha, out var commitObject))
+        {
+            throw new InvalidOperationException($"Commit {commitSha} not found in pack file");
+        }
+
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
+        {
+            throw new InvalidOperationException($"Object {commitSha} is not a commit");
+        }
+
+        // Parse the commit to get the tree SHA
+        var commit = GitObjects.ParseCommit(commitObject.Data);
+
+        // Step 2: Navigate trees to find blob SHAs in the subdirectory
+        var blobShas = new List<string>();
+        CollectBlobShasFromSubdirectory(
+            commit.TreeSHA1,
+            subdirectoryPath,
+            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null,
+            blobShas);
+
+        // Step 3: Check cache for blobs we already have
+        var cachedBlobs = new Dictionary<string, ReadOnlyMemory<byte>>();
+        var missingBlobShas = new List<string>();
+
+        if (getBlobFromCache != null)
+        {
+            foreach (var blobSha in blobShas)
+            {
+                var cached = getBlobFromCache(blobSha);
+                if (cached.HasValue)
+                {
+                    cachedBlobs[blobSha] = cached.Value;
+                }
+                else
+                {
+                    missingBlobShas.Add(blobSha);
+                }
+            }
+        }
+        else
+        {
+            missingBlobShas.AddRange(blobShas);
+        }
+
+        // Step 4: Fetch missing blobs
+        if (missingBlobShas.Count > 0)
+        {
+            var blobsPackFileData =
+                await GitSmartHttp.FetchSpecificObjectsAsync(gitUrl, missingBlobShas, httpClient);
+
+            // Parse the blobs pack file
+            var blobsIndexResult = PackIndex.GeneratePackIndexV2(blobsPackFileData);
+            var blobsIndexEntries = PackIndex.ParsePackIndexV2(blobsIndexResult.IndexData);
+            var blobObjects = PackFile.ParseAllObjects(blobsPackFileData, blobsIndexEntries);
+
+            foreach (var blobObject in blobObjects)
+            {
+                if (blobObject.Type == PackFile.ObjectType.Blob)
+                {
+                    cachedBlobs[blobObject.SHA1base16] = blobObject.Data;
+                    
+                    // Store in cache if callback provided
+                    storeBlobInCache?.Invoke(blobObject.SHA1base16, blobObject.Data);
+                }
+            }
+        }
+
+        // Step 5: Build the final dictionary with all objects (trees from step 1 + blobs from steps 3&4)
+        foreach (var (sha, blob) in cachedBlobs)
+        {
+            if (!objectsBySHA1.ContainsKey(sha))
+            {
+                objectsBySHA1[sha] = new PackFile.PackObject(
+                    PackFile.ObjectType.Blob,
+                    blob.Length,
+                    blob,
+                    sha);
+            }
+        }
+
+        // Step 6: Get files from the subdirectory (now we have all the blobs)
+        return GitObjects.GetFilesFromSubdirectory(
+            commit.TreeSHA1,
+            subdirectoryPath,
+            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+    }
+
+    /// <summary>
+    /// Collects blob SHAs from a subdirectory by navigating the tree structure.
+    /// </summary>
+    private static void CollectBlobShasFromSubdirectory(
+        string treeSHA1,
+        IReadOnlyList<string> subdirectoryPath,
+        Func<string, PackFile.PackObject?> getObjectBySHA1,
+        List<string> blobShas)
+    {
+        // Navigate to the subdirectory
+        var currentTreeSHA1 = treeSHA1;
+
+        foreach (var pathComponent in subdirectoryPath)
+        {
+            var treeObject = getObjectBySHA1(currentTreeSHA1);
+            if (treeObject is null)
+            {
+                throw new InvalidOperationException($"Tree {currentTreeSHA1} not found");
+            }
+
+            if (treeObject.Type is not PackFile.ObjectType.Tree)
+            {
+                throw new InvalidOperationException($"Object {currentTreeSHA1} is not a tree");
+            }
+
+            var tree = GitObjects.ParseTree(treeObject.Data);
+            var entry = tree.Entries.FirstOrDefault(e => e.Name == pathComponent);
+
+            if (entry is null)
+            {
+                throw new InvalidOperationException($"Path component '{pathComponent}' not found in tree");
+            }
+
+            if (entry.Mode is not "40000")
+            {
+                throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
+            }
+
+            currentTreeSHA1 = entry.SHA1;
+        }
+
+        // Now collect all blob SHAs from this tree recursively
+        CollectBlobShasFromTree(currentTreeSHA1, getObjectBySHA1, blobShas);
+    }
+
+    /// <summary>
+    /// Recursively collects all blob SHAs from a tree.
+    /// </summary>
+    private static void CollectBlobShasFromTree(
+        string treeSHA1,
+        Func<string, PackFile.PackObject?> getObjectBySHA1,
+        List<string> blobShas)
+    {
+        var treeObject = getObjectBySHA1(treeSHA1);
+        if (treeObject is null)
+        {
+            throw new InvalidOperationException($"Tree {treeSHA1} not found");
+        }
+
+        if (treeObject.Type is not PackFile.ObjectType.Tree)
+        {
+            throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
+        }
+
+        var tree = GitObjects.ParseTree(treeObject.Data);
+
+        foreach (var entry in tree.Entries)
+        {
+            if (entry.Mode is "40000") // Directory
+            {
+                CollectBlobShasFromTree(entry.SHA1, getObjectBySHA1, blobShas);
+            }
+            else // File (blob)
+            {
+                blobShas.Add(entry.SHA1);
+            }
+        }
     }
 
     /// <summary>
