@@ -82,14 +82,6 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
-    public void Placeholder()
-    {
-        /*
-         * Avoid "Zero tests ran" error in CI as long as there are no real tests yet.
-         * */
-    }
-
-    [Fact]
     public async Task Load_subdirectory_tree_contents()
     {
         // Test loading a subdirectory from a specific commit
@@ -98,8 +90,9 @@ public class LoadFromGitHubTests
         var subdirectoryPath = new[] { "implement", "GitCore" };
 
         // Load the subdirectory contents
-        var subdirectoryContents = await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
-            repositoryUrl, commitSha, subdirectoryPath);
+        var subdirectoryContents =
+            await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
+                repositoryUrl, commitSha, subdirectoryPath);
 
         // Verify that the subdirectory was loaded successfully
         subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
@@ -152,6 +145,72 @@ public class LoadFromGitHubTests
             "Common/EnumerableExtensions.cs should have the expected content");
     }
 
+    [Fact]
+    public async Task Load_relatively_small_subdirectory_from_larger_repository()
+    {
+        // Create a custom HttpClient with a handler to track data transfer
+        var dataTrackingHandler = new DataTrackingHandler(new System.Net.Http.SocketsHttpHandler());
+        using var httpClient = new System.Net.Http.HttpClient(dataTrackingHandler);
+
+        // Target: Load the 'guide' subdirectory, which is relatively small compared to others.
+        var repositoryUrl = "https://github.com/pine-vm/pine.git";
+        var commitSha = "c837c8199f38aab839c40019a50055e16d100c74";
+        var subdirectoryPath = new[] { "guide" };
+
+        // Load the subdirectory contents
+        var subdirectoryContents =
+            await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
+                repositoryUrl, commitSha, subdirectoryPath, httpClient);
+
+        // Verify that the subdirectory was loaded successfully
+        subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
+        subdirectoryContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
+
+        // Verify that we have the expected files
+        subdirectoryContents.Should().ContainKey(
+            ["customizing-elm-app-builds-with-compilation-interfaces.md"],
+            "The subdirectory should contain an 'customizing-elm-app-builds-with-compilation-interfaces.md' file");
+
+        subdirectoryContents.Should().ContainKey(
+            ["how-to-build-a-backend-app-in-elm.md"],
+            "The subdirectory should contain a 'how-to-build-a-backend-app-in-elm.md' file");
+
+        var subtreeAggregateFileContentSize =
+            subdirectoryContents.Values.Sum(file => file.Length);
+
+        // Profile data transfer
+        var totalBytesReceived = dataTrackingHandler.TotalBytesReceived;
+        var totalBytesSent = dataTrackingHandler.TotalBytesSent;
+        var requestCount = dataTrackingHandler.RequestCount;
+
+        // Log profiling information for debugging
+        System.Console.WriteLine($"Data Transfer Profile:");
+        System.Console.WriteLine($"  Total Requests: {requestCount}");
+        System.Console.WriteLine($"  Total Bytes Sent: {totalBytesSent:N0} bytes");
+        System.Console.WriteLine($"  Total Bytes Received: {totalBytesReceived:N0} bytes");
+        System.Console.WriteLine($"  Total Data Transfer: {totalBytesSent + totalBytesReceived:N0} bytes");
+        System.Console.WriteLine($"  Subdirectory Content Size: {subtreeAggregateFileContentSize:N0} bytes");
+        System.Console.WriteLine($"  Files in Subdirectory: {subdirectoryContents.Count}");
+        System.Console.WriteLine($"  Compression Ratio: {(double)totalBytesReceived / subtreeAggregateFileContentSize:F2}x");
+
+        // Assert bounds on data transfer
+        // With blobless clone optimization, we:
+        // 1. Fetch commit + trees only (blobless pack file)
+        // 2. Navigate to subdirectory and identify needed blobs
+        // 3. Fetch only those specific blobs
+        // This results in significantly less data transfer compared to fetching all files
+
+        requestCount.Should().BeLessThan(10, "Should not make excessive HTTP requests");
+
+        // Set a reasonable upper bound for data transfer with blobless optimization
+        // We expect data transfer to be close to the actual content size plus some overhead
+        // for trees, commit, and pack file headers.
+        var maxExpectedBytes = subtreeAggregateFileContentSize * 4 + 100_000;
+
+        totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
+            $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");
+    }
+
     // Helper class for tracking HTTP requests
     private class RequestCountingHandler(System.Net.Http.HttpMessageHandler innerHandler)
         : System.Net.Http.DelegatingHandler(innerHandler)
@@ -164,6 +223,53 @@ public class LoadFromGitHubTests
         {
             RequestCount++;
             return await base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    // Helper class for tracking data transfer
+    private class DataTrackingHandler(System.Net.Http.HttpMessageHandler innerHandler)
+        : System.Net.Http.DelegatingHandler(innerHandler)
+    {
+        public int RequestCount { get; private set; }
+        public long TotalBytesSent { get; private set; }
+        public long TotalBytesReceived { get; private set; }
+
+        protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request,
+            System.Threading.CancellationToken cancellationToken)
+        {
+            RequestCount++;
+
+            // Track request size
+            if (request.Content is not null)
+            {
+                var requestBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
+                TotalBytesSent += requestBytes.Length;
+            }
+
+            // Send the request
+            var response = await base.SendAsync(request, cancellationToken);
+
+            // Track response size
+            if (response.Content is not null)
+            {
+                // Capture headers before reading content
+                var originalHeaders = response.Content.Headers.ToList();
+
+                var responseBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                TotalBytesReceived += responseBytes.Length;
+
+                // Re-wrap the content so it can be read again by the caller
+                response.Content = new System.Net.Http.ByteArrayContent(responseBytes);
+
+                // Restore the original content headers
+                foreach (var header in originalHeaders)
+                {
+                    response.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
+            }
+
+            return response;
         }
     }
 }
