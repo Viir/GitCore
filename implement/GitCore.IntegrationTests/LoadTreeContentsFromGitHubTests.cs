@@ -146,16 +146,16 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
-    public async Task Load_eve_online_bot_subdirectory_with_data_transfer_profiling()
+    public async Task Load_relatively_small_subdirectory_from_larger_repository()
     {
         // Create a custom HttpClient with a handler to track data transfer
         var dataTrackingHandler = new DataTrackingHandler(new System.Net.Http.SocketsHttpHandler());
         using var httpClient = new System.Net.Http.HttpClient(dataTrackingHandler);
 
-        // Target: Load the EVE Online combat anomaly bot subdirectory
-        var repositoryUrl = "https://github.com/Viir/bots.git";
-        var commitSha = "c42f50d6b4dc4640c62b1c3ecade7187eaabf888";
-        var subdirectoryPath = new[] { "implement", "applications", "eve-online", "eve-online-combat-anomaly-bot" };
+        // Target: Load the 'guide' subdirectory, which is relatively small compared to others.
+        var repositoryUrl = "https://github.com/pine-vm/pine.git";
+        var commitSha = "c837c8199f38aab839c40019a50055e16d100c74";
+        var subdirectoryPath = new[] { "guide" };
 
         // Load the subdirectory contents
         var subdirectoryContents =
@@ -167,14 +167,13 @@ public class LoadFromGitHubTests
         subdirectoryContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
 
         // Verify that we have the expected files
-        var hasElmJson =
-            subdirectoryContents.Should().ContainKey(["elm.json"],
-            "The subdirectory should contain an elm.json file");
+        subdirectoryContents.Should().ContainKey(
+            ["customizing-elm-app-builds-with-compilation-interfaces.md"],
+            "The subdirectory should contain an 'customizing-elm-app-builds-with-compilation-interfaces.md' file");
 
-        // Verify we have the main bot file
-        var hasBotElm =
-            subdirectoryContents.Should().ContainKey(["Bot.elm"],
-            "The subdirectory should contain a Bot.elm file");
+        subdirectoryContents.Should().ContainKey(
+            ["how-to-build-a-backend-app-in-elm.md"],
+            "The subdirectory should contain a 'how-to-build-a-backend-app-in-elm.md' file");
 
         var subtreeAggregateFileContentSize =
             subdirectoryContents.Values.Sum(file => file.Length);
