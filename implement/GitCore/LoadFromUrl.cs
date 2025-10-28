@@ -107,9 +107,9 @@ public class LoadFromUrl
         FilePath subdirectoryPath,
         HttpClient? httpClient = null)
     {
-        // Fetch the pack file containing the commit and its tree
+        // Fetch the pack file containing only objects needed for this subdirectory
         var packFileData =
-            await GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha, httpClient);
+            await GitSmartHttp.FetchPackFileAsync(gitUrl, commitSha, subdirectoryPath, httpClient);
 
         return LoadSubdirectoryContentsFromPackFile(packFileData, commitSha, subdirectoryPath);
     }

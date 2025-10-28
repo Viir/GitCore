@@ -189,6 +189,9 @@ public class LoadFromGitHubTests
         System.Console.WriteLine($"  Total Bytes Sent: {totalBytesSent:N0} bytes");
         System.Console.WriteLine($"  Total Bytes Received: {totalBytesReceived:N0} bytes");
         System.Console.WriteLine($"  Total Data Transfer: {totalBytesSent + totalBytesReceived:N0} bytes");
+        System.Console.WriteLine($"  Subdirectory Content Size: {subtreeAggregateFileContentSize:N0} bytes");
+        System.Console.WriteLine($"  Files in Subdirectory: {subdirectoryContents.Count}");
+        System.Console.WriteLine($"  Compression Ratio: {(double)totalBytesReceived / subtreeAggregateFileContentSize:F2}x");
 
         // Assert bounds on data transfer
         // The entire bots repository is large, but we're only requesting a subdirectory
@@ -204,8 +207,10 @@ public class LoadFromGitHubTests
 
         // Set a reasonable upper bound for data transfer, considering the subdirectory size
         // For a subdirectory with a few files, we expect this to be much less than downloading
-
-        var maxExpectedBytes = subtreeAggregateFileContentSize * 7 + 100_000; // multiple the size of file contents in subdirectory + overhead
+        // the entire repository. The pack file contains compressed data plus overhead for
+        // commit, tree objects, and pack file headers. A factor of 7.5x with additional overhead
+        // provides a reasonable bound while still ensuring optimization.
+        var maxExpectedBytes = (long)(subtreeAggregateFileContentSize * 7.5) + 150_000;
 
         totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
             $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");

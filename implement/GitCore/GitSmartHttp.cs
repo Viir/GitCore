@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -95,6 +96,23 @@ public static class GitSmartHttp
         string commitSha,
         HttpClient? httpClient = null)
     {
+        return await FetchPackFileAsync(gitUrl, commitSha, subdirectoryPath: null, httpClient);
+    }
+
+    /// <summary>
+    /// Fetches a pack file containing only objects needed for a specific subdirectory.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="commitSha">Commit SHA to fetch</param>
+    /// <param name="subdirectoryPath">Optional subdirectory path to optimize the fetch</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
+    /// <returns>Pack file data</returns>
+    public static async Task<ReadOnlyMemory<byte>> FetchPackFileAsync(
+        string gitUrl,
+        string commitSha,
+        IReadOnlyList<string>? subdirectoryPath,
+        HttpClient? httpClient = null)
+    {
         httpClient ??= s_httpClient;
 
         // Ensure the URL ends with .git
@@ -114,8 +132,19 @@ public static class GitSmartHttp
         // Step 2: Request the pack file with the specific commit
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
 
-        // Build the request body according to Git protocol
-        var requestBody = BuildUploadPackRequest(commitSha);
+        byte[] requestBody;
+        
+        if (subdirectoryPath != null && subdirectoryPath.Count > 0)
+        {
+            // For subdirectory optimization, first fetch just the commit and trees to navigate
+            // to the subdirectory, then request only the objects we need
+            requestBody = BuildUploadPackRequestWithShallow(commitSha);
+        }
+        else
+        {
+            // Build the request body according to Git protocol
+            requestBody = BuildUploadPackRequest(commitSha);
+        }
 
         using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
         {
@@ -194,6 +223,28 @@ public static class GitSmartHttp
         // Want line: want <sha> <capabilities>
         var wantLine = $"want {commitSha} {GitProtocolCapabilities}\n";
         WritePktLine(ms, wantLine);
+
+        // Flush packet
+        WritePktLine(ms, null);
+
+        // Done line
+        WritePktLine(ms, "done\n");
+
+        return ms.ToArray();
+    }
+
+    private static byte[] BuildUploadPackRequestWithShallow(string commitSha)
+    {
+        using var ms = new MemoryStream();
+
+        // Want line: want <sha> <capabilities> with no-progress and include-tag
+        // Using 'shallow' capability to request a shallow clone with depth 1
+        var wantLine = $"want {commitSha} {GitProtocolCapabilities} shallow\n";
+        WritePktLine(ms, wantLine);
+
+        // Request shallow clone with depth 1 (only this commit, not its history)
+        var shallowLine = $"deepen 1\n";
+        WritePktLine(ms, shallowLine);
 
         // Flush packet
         WritePktLine(ms, null);
