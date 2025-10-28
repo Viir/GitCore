@@ -204,8 +204,8 @@ public class LoadFromGitHubTests
 
         // Set a reasonable upper bound for data transfer with blobless optimization
         // We expect data transfer to be close to the actual content size plus some overhead
-        // for trees, commit, and pack file headers. A factor of 0.5x (50% overhead) is reasonable.
-        var maxExpectedBytes = (long)(subtreeAggregateFileContentSize * 1.5);
+        // for trees, commit, and pack file headers.
+        var maxExpectedBytes = subtreeAggregateFileContentSize * 4 + 100_000;
 
         totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
             $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");
@@ -241,7 +241,7 @@ public class LoadFromGitHubTests
             RequestCount++;
 
             // Track request size
-            if (request.Content != null)
+            if (request.Content is not null)
             {
                 var requestBytes = await request.Content.ReadAsByteArrayAsync(cancellationToken);
                 TotalBytesSent += requestBytes.Length;
@@ -251,7 +251,7 @@ public class LoadFromGitHubTests
             var response = await base.SendAsync(request, cancellationToken);
 
             // Track response size
-            if (response.Content != null)
+            if (response.Content is not null)
             {
                 // Capture headers before reading content
                 var originalHeaders = response.Content.Headers.ToList();

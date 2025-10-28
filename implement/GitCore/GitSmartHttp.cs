@@ -137,7 +137,7 @@ public static class GitSmartHttp
         // 1. Git Protocol v2 with partial clone and sparse checkout support
         // 2. Multiple round-trips: fetch trees, navigate to subdirectory, then fetch only those blobs
         // The current shallow approach (depth=1) already provides significant optimization
-        int? shallowDepth = (subdirectoryPath != null && subdirectoryPath.Count > 0) ? 1 : null;
+        int? shallowDepth = (subdirectoryPath is not null && subdirectoryPath.Count > 0) ? 1 : null;
         var requestBody = BuildUploadPackRequest(commitSha, shallowDepth);
 
         using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
@@ -288,15 +288,17 @@ public static class GitSmartHttp
 
         // Want line: want <sha> <capabilities>
         var capabilities = GitProtocolCapabilities;
+
         if (shallowDepth.HasValue)
         {
             capabilities = $"{capabilities} shallow";
         }
-        if (filter != null)
+
+        if (filter is not null)
         {
             capabilities = $"{capabilities} filter";
         }
-        
+
         var wantLine = $"want {commitSha} {capabilities}\n";
         WritePktLine(ms, wantLine);
 
@@ -308,7 +310,7 @@ public static class GitSmartHttp
         }
 
         // For filtered fetches, specify the filter
-        if (filter != null)
+        if (filter is not null)
         {
             var filterLine = $"filter {filter}\n";
             WritePktLine(ms, filterLine);
@@ -345,9 +347,9 @@ public static class GitSmartHttp
         using var ms = new MemoryStream();
 
         // Request each object with want lines
-        for (int i = 0; i < objectShas.Count; i++)
+        for (var i = 0; i < objectShas.Count; i++)
         {
-            var capabilities = i == 0 ? $" {GitProtocolCapabilities}" : "";
+            var capabilities = i is 0 ? $" {GitProtocolCapabilities}" : "";
             var wantLine = $"want {objectShas[i]}{capabilities}\n";
             WritePktLine(ms, wantLine);
         }

@@ -173,7 +173,7 @@ public class LoadFromUrl
     /// <summary>
     /// Common helper to parse pack file and extract commit object.
     /// </summary>
-    private static (GitObjects.CommitObject commit, IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1) 
+    private static (GitObjects.CommitObject commit, IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1)
         ParsePackFileAndGetCommit(ReadOnlyMemory<byte> packFileData, string commitSha)
     {
         // Generate index for the pack file
@@ -249,7 +249,7 @@ public class LoadFromUrl
         var cachedBlobs = new Dictionary<string, ReadOnlyMemory<byte>>();
         var missingBlobShas = new List<string>();
 
-        if (getBlobFromCache != null)
+        if (getBlobFromCache is not null)
         {
             foreach (var blobSha in blobShas)
             {
@@ -282,10 +282,10 @@ public class LoadFromUrl
 
             foreach (var blobObject in blobObjects)
             {
-                if (blobObject.Type == PackFile.ObjectType.Blob)
+                if (blobObject.Type is PackFile.ObjectType.Blob)
                 {
                     cachedBlobs[blobObject.SHA1base16] = blobObject.Data;
-                    
+
                     // Store in cache if callback provided
                     storeBlobInCache?.Invoke(blobObject.SHA1base16, blobObject.Data);
                 }
