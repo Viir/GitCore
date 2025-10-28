@@ -175,6 +175,9 @@ public class LoadFromGitHubTests
             subdirectoryContents.Should().ContainKey(["Bot.elm"],
             "The subdirectory should contain a Bot.elm file");
 
+        var subtreeAggregateFileContentSize =
+            subdirectoryContents.Values.Sum(file => file.Length);
+
         // Profile data transfer
         var totalBytesReceived = dataTrackingHandler.TotalBytesReceived;
         var totalBytesSent = dataTrackingHandler.TotalBytesSent;
@@ -199,11 +202,11 @@ public class LoadFromGitHubTests
 
         requestCount.Should().BeLessThan(10, "Should not make excessive HTTP requests");
 
-        // Set a reasonable upper bound for data transfer
+        // Set a reasonable upper bound for data transfer, considering the subdirectory size
         // For a subdirectory with a few files, we expect this to be much less than downloading
-        // the entire repository. Setting a bound of 10 MB as a reasonable upper limit.
-        // This should be well below the full repository size while allowing for the necessary objects.
-        var maxExpectedBytes = 10 * 1024 * 1024; // 10 MB
+
+        var maxExpectedBytes = subtreeAggregateFileContentSize * 7 + 100_000; // multiple the size of file contents in subdirectory + overhead
+
         totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
             $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");
     }
