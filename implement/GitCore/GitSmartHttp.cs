@@ -133,6 +133,10 @@ public static class GitSmartHttp
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
 
         // For subdirectory optimization, use shallow fetch to only get the commit without history
+        // Note: To further optimize by fetching only specific subdirectory contents would require:
+        // 1. Git Protocol v2 with partial clone and sparse checkout support
+        // 2. Multiple round-trips: fetch trees, navigate to subdirectory, then fetch only those blobs
+        // The current shallow approach (depth=1) already provides significant optimization
         int? shallowDepth = (subdirectoryPath != null && subdirectoryPath.Count > 0) ? 1 : null;
         var requestBody = BuildUploadPackRequest(commitSha, shallowDepth);
 
@@ -211,7 +215,12 @@ public static class GitSmartHttp
         using var ms = new MemoryStream();
 
         // Want line: want <sha> <capabilities>
-        var capabilities = shallowDepth.HasValue ? $"{GitProtocolCapabilities} shallow" : GitProtocolCapabilities;
+        var capabilities = GitProtocolCapabilities;
+        if (shallowDepth.HasValue)
+        {
+            capabilities = $"{capabilities} shallow";
+        }
+        
         var wantLine = $"want {commitSha} {capabilities}\n";
         WritePktLine(ms, wantLine);
 
