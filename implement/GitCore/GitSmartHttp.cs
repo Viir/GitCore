@@ -133,8 +133,8 @@ public static class GitSmartHttp
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
 
         // For subdirectory optimization, use shallow fetch to only get the commit without history
-        bool useShallow = subdirectoryPath != null && subdirectoryPath.Count > 0;
-        var requestBody = BuildUploadPackRequest(commitSha, useShallow);
+        int? shallowDepth = (subdirectoryPath != null && subdirectoryPath.Count > 0) ? 1 : null;
+        var requestBody = BuildUploadPackRequest(commitSha, shallowDepth);
 
         using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
         {
@@ -206,19 +206,19 @@ public static class GitSmartHttp
         throw new InvalidOperationException($"Branch {branch} not found in repository {owner}/{repo}");
     }
 
-    private static byte[] BuildUploadPackRequest(string commitSha, bool useShallow = false)
+    private static byte[] BuildUploadPackRequest(string commitSha, int? shallowDepth = null)
     {
         using var ms = new MemoryStream();
 
         // Want line: want <sha> <capabilities>
-        var capabilities = useShallow ? $"{GitProtocolCapabilities} shallow" : GitProtocolCapabilities;
+        var capabilities = shallowDepth.HasValue ? $"{GitProtocolCapabilities} shallow" : GitProtocolCapabilities;
         var wantLine = $"want {commitSha} {capabilities}\n";
         WritePktLine(ms, wantLine);
 
-        // For shallow clones, request depth 1 (only this commit, not its history)
-        if (useShallow)
+        // For shallow clones, request specific depth (only this commit, not its history)
+        if (shallowDepth.HasValue)
         {
-            var shallowLine = "deepen 1\n";
+            var shallowLine = $"deepen {shallowDepth.Value}\n";
             WritePktLine(ms, shallowLine);
         }
 
