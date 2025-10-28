@@ -132,19 +132,9 @@ public static class GitSmartHttp
         // Step 2: Request the pack file with the specific commit
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
 
-        byte[] requestBody;
-        
-        if (subdirectoryPath != null && subdirectoryPath.Count > 0)
-        {
-            // For subdirectory optimization, first fetch just the commit and trees to navigate
-            // to the subdirectory, then request only the objects we need
-            requestBody = BuildUploadPackRequestWithShallow(commitSha);
-        }
-        else
-        {
-            // Build the request body according to Git protocol
-            requestBody = BuildUploadPackRequest(commitSha);
-        }
+        // For subdirectory optimization, use shallow fetch to only get the commit without history
+        bool useShallow = subdirectoryPath != null && subdirectoryPath.Count > 0;
+        var requestBody = BuildUploadPackRequest(commitSha, useShallow);
 
         using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
         {
@@ -216,35 +206,21 @@ public static class GitSmartHttp
         throw new InvalidOperationException($"Branch {branch} not found in repository {owner}/{repo}");
     }
 
-    private static byte[] BuildUploadPackRequest(string commitSha)
+    private static byte[] BuildUploadPackRequest(string commitSha, bool useShallow = false)
     {
         using var ms = new MemoryStream();
 
         // Want line: want <sha> <capabilities>
-        var wantLine = $"want {commitSha} {GitProtocolCapabilities}\n";
+        var capabilities = useShallow ? $"{GitProtocolCapabilities} shallow" : GitProtocolCapabilities;
+        var wantLine = $"want {commitSha} {capabilities}\n";
         WritePktLine(ms, wantLine);
 
-        // Flush packet
-        WritePktLine(ms, null);
-
-        // Done line
-        WritePktLine(ms, "done\n");
-
-        return ms.ToArray();
-    }
-
-    private static byte[] BuildUploadPackRequestWithShallow(string commitSha)
-    {
-        using var ms = new MemoryStream();
-
-        // Want line: want <sha> <capabilities> with no-progress and include-tag
-        // Using 'shallow' capability to request a shallow clone with depth 1
-        var wantLine = $"want {commitSha} {GitProtocolCapabilities} shallow\n";
-        WritePktLine(ms, wantLine);
-
-        // Request shallow clone with depth 1 (only this commit, not its history)
-        var shallowLine = $"deepen 1\n";
-        WritePktLine(ms, shallowLine);
+        // For shallow clones, request depth 1 (only this commit, not its history)
+        if (useShallow)
+        {
+            var shallowLine = "deepen 1\n";
+            WritePktLine(ms, shallowLine);
+        }
 
         // Flush packet
         WritePktLine(ms, null);
