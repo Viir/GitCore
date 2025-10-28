@@ -90,8 +90,9 @@ public class LoadFromGitHubTests
         var subdirectoryPath = new[] { "implement", "GitCore" };
 
         // Load the subdirectory contents
-        var subdirectoryContents = await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
-            repositoryUrl, commitSha, subdirectoryPath);
+        var subdirectoryContents =
+            await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
+                repositoryUrl, commitSha, subdirectoryPath);
 
         // Verify that the subdirectory was loaded successfully
         subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");

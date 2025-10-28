@@ -100,9 +100,9 @@ public class LoadFromUrl
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
     /// <param name="commitSha">Commit SHA to load</param>
     /// <param name="subdirectoryPath">Path to the subdirectory (e.g., ["implement", "GitCore"])</param>
-    /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default static client.</param>
+    /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default client.</param>
     /// <param name="getBlobFromCache">Optional delegate to retrieve a blob from cache by SHA. Returns null if not in cache.</param>
-    /// <param name="storeBlobInCache">Optional delegate to store a blob in cache with its SHA and content.</param>
+    /// <param name="reportLoadedBlob">Optional delegate to be invoke when a blob was loaded, with its SHA and content.</param>
     /// <returns>A dictionary mapping file paths (relative to subdirectory) to their contents</returns>
     public static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadSubdirectoryContentsFromGitUrlAsync(
         string gitUrl,
@@ -110,10 +110,10 @@ public class LoadFromUrl
         FilePath subdirectoryPath,
         HttpClient? httpClient = null,
         Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache = null,
-        Action<string, ReadOnlyMemory<byte>>? storeBlobInCache = null)
+        Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob = null)
     {
         return await LoadSubdirectoryContentsWithBloblessCloneAsync(
-            gitUrl, commitSha, subdirectoryPath, httpClient, getBlobFromCache, storeBlobInCache);
+            gitUrl, commitSha, subdirectoryPath, httpClient, getBlobFromCache, reportLoadedBlob);
     }
 
     /// <summary>
@@ -122,13 +122,26 @@ public class LoadFromUrl
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
     /// <param name="commitSha">Commit SHA to load</param>
     /// <param name="subdirectoryPath">Path to the subdirectory (e.g., ["implement", "GitCore"])</param>
+    /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default client.</param>
+    /// <param name="getBlobFromCache">Optional delegate to retrieve a blob from cache by SHA. Returns null if not in cache.</param>
+    /// <param name="reportLoadedBlob">Optional delegate to be invoke when a blob was loaded, with its SHA and content.</param>
     /// <returns>A dictionary mapping file paths (relative to subdirectory) to their contents</returns>
     public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadSubdirectoryContentsFromGitUrl(
         string gitUrl,
         string commitSha,
-        FilePath subdirectoryPath)
+        FilePath subdirectoryPath,
+        HttpClient? httpClient = null,
+        Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache = null,
+        Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob = null)
     {
-        return LoadSubdirectoryContentsFromGitUrlAsync(gitUrl, commitSha, subdirectoryPath, null).GetAwaiter().GetResult();
+        return LoadSubdirectoryContentsFromGitUrlAsync(
+            gitUrl,
+            commitSha,
+            subdirectoryPath,
+            httpClient,
+            getBlobFromCache,
+            reportLoadedBlob)
+            .GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -211,7 +224,7 @@ public class LoadFromUrl
         FilePath subdirectoryPath,
         HttpClient? httpClient,
         Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache,
-        Action<string, ReadOnlyMemory<byte>>? storeBlobInCache)
+        Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob)
     {
         // Step 1: Fetch blobless pack file (commit and trees only)
         var bloblessPackFileData =
@@ -253,10 +266,9 @@ public class LoadFromUrl
         {
             foreach (var blobSha in blobShas)
             {
-                var cached = getBlobFromCache(blobSha);
-                if (cached.HasValue)
+                if (getBlobFromCache(blobSha) is { } cached)
                 {
-                    cachedBlobs[blobSha] = cached.Value;
+                    cachedBlobs[blobSha] = cached;
                 }
                 else
                 {
@@ -285,10 +297,10 @@ public class LoadFromUrl
                 if (blobObject.Type is PackFile.ObjectType.Blob)
                 {
                     cachedBlobs[blobObject.SHA1base16] = blobObject.Data;
-
-                    // Store in cache if callback provided
-                    storeBlobInCache?.Invoke(blobObject.SHA1base16, blobObject.Data);
                 }
+
+                // Support caller caching blobs for future reads.
+                reportLoadedBlob?.Invoke(blobObject.SHA1base16, blobObject.Data);
             }
         }
 
@@ -297,11 +309,12 @@ public class LoadFromUrl
         {
             if (!objectsBySHA1.ContainsKey(sha))
             {
-                objectsBySHA1[sha] = new PackFile.PackObject(
-                    PackFile.ObjectType.Blob,
-                    blob.Length,
-                    blob,
-                    sha);
+                objectsBySHA1[sha] =
+                    new PackFile.PackObject(
+                        PackFile.ObjectType.Blob,
+                        blob.Length,
+                        blob,
+                        sha);
             }
         }
 
@@ -317,7 +330,7 @@ public class LoadFromUrl
     /// </summary>
     private static void CollectBlobShasFromSubdirectory(
         string treeSHA1,
-        IReadOnlyList<string> subdirectoryPath,
+        FilePath subdirectoryPath,
         Func<string, PackFile.PackObject?> getObjectBySHA1,
         List<string> blobShas)
     {
@@ -327,6 +340,7 @@ public class LoadFromUrl
         foreach (var pathComponent in subdirectoryPath)
         {
             var treeObject = getObjectBySHA1(currentTreeSHA1);
+
             if (treeObject is null)
             {
                 throw new InvalidOperationException($"Tree {currentTreeSHA1} not found");
