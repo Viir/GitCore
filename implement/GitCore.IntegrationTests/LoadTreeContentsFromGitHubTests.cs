@@ -82,14 +82,6 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
-    public void Placeholder()
-    {
-        /*
-         * Avoid "Zero tests ran" error in CI as long as there are no real tests yet.
-         * */
-    }
-
-    [Fact]
     public async Task Load_subdirectory_tree_contents()
     {
         // Test loading a subdirectory from a specific commit
@@ -165,20 +157,23 @@ public class LoadFromGitHubTests
         var subdirectoryPath = new[] { "implement", "applications", "eve-online", "eve-online-combat-anomaly-bot" };
 
         // Load the subdirectory contents
-        var subdirectoryContents = await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
-            repositoryUrl, commitSha, subdirectoryPath, httpClient);
+        var subdirectoryContents =
+            await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
+                repositoryUrl, commitSha, subdirectoryPath, httpClient);
 
         // Verify that the subdirectory was loaded successfully
         subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
         subdirectoryContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
 
         // Verify that we have the expected files
-        var hasElmJson = subdirectoryContents.Keys.Any(path => path.Count == 1 && path[0] == "elm.json");
-        hasElmJson.Should().BeTrue("The subdirectory should contain an elm.json file");
+        var hasElmJson =
+            subdirectoryContents.Should().ContainKey(["elm.json"],
+            "The subdirectory should contain an elm.json file");
 
         // Verify we have the main bot file
-        var hasBotElm = subdirectoryContents.Keys.Any(path => path.Count == 1 && path[0] == "Bot.elm");
-        hasBotElm.Should().BeTrue("The subdirectory should contain a Bot.elm file");
+        var hasBotElm =
+            subdirectoryContents.Should().ContainKey(["Bot.elm"],
+            "The subdirectory should contain a Bot.elm file");
 
         // Profile data transfer
         var totalBytesReceived = dataTrackingHandler.TotalBytesReceived;
@@ -196,14 +191,14 @@ public class LoadFromGitHubTests
         // The entire bots repository is large, but we're only requesting a subdirectory
         // We expect the data transfer to be optimized by using Git's smart HTTP protocol
         // which should only transfer the objects needed for this subdirectory
-        
+
         // Based on the Git protocol, we expect:
         // 1. A request to info/refs (small, ~few KB)
         // 2. A request to git-upload-pack with the pack file response
         // The pack file should contain only the commit, trees, and blobs for the subdirectory
-        
+
         requestCount.Should().BeLessThan(10, "Should not make excessive HTTP requests");
-        
+
         // Set a reasonable upper bound for data transfer
         // For a subdirectory with a few files, we expect this to be much less than downloading
         // the entire repository. Setting a bound of 10 MB as a reasonable upper limit.
@@ -257,13 +252,13 @@ public class LoadFromGitHubTests
             {
                 // Capture headers before reading content
                 var originalHeaders = response.Content.Headers.ToList();
-                
+
                 var responseBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
                 TotalBytesReceived += responseBytes.Length;
-                
+
                 // Re-wrap the content so it can be read again by the caller
                 response.Content = new System.Net.Http.ByteArrayContent(responseBytes);
-                
+
                 // Restore the original content headers
                 foreach (var header in originalHeaders)
                 {
