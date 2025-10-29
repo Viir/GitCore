@@ -330,4 +330,78 @@ public class BloblessCloneApiTests
         files.Count.Should().BeGreaterThan(0, "Should have some files");
         directories.Count.Should().BeGreaterThan(0, "Should have some directories (e.g., Common)");
     }
+
+    [Fact]
+    public async Task Navigate_commit_parent_chain_and_verify_commit_metadata()
+    {
+        // This test navigates the chain of first parents, four commits deep,
+        // and asserts equality for commit properties like parents, time, message, author, committer
+
+        // Arrange
+        var repositoryUrl = "https://github.com/Viir/GitCore.git";
+
+        // Starting from a known commit with at least 4 commits in the parent chain
+        // Using commit: 377a8477cff1f2c40108634b524dcf80a3e41db1 (has parent e912ee56...)
+        var startCommitSha = "377a8477cff1f2c40108634b524dcf80a3e41db1";
+
+        // Fetch with unlimited depth to get the full commit history
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, startCommitSha, depth: null);
+
+        // Act & Assert - Navigate 4 commits deep through first parents
+        var currentSha = startCommitSha;
+
+        for (var i = 0; i < 4; i++)
+        {
+            // Get the commit object
+            var commitObject = repository.GetObject(currentSha);
+            commitObject.Should().NotBeNull($"Commit {i} should exist in repository");
+            commitObject!.Type.Should().Be(PackFile.ObjectType.Commit, $"Object {currentSha} should be a commit");
+
+            // Parse the commit
+            var commit = GitObjects.ParseCommit(commitObject.Data);
+
+            // Verify commit has required properties
+            commit.TreeSHA1.Should().NotBeNullOrEmpty($"Commit {i} should have a tree SHA");
+            commit.Message.Should().NotBeNullOrEmpty($"Commit {i} should have a message");
+
+            // Verify author properties
+            commit.Author.Should().NotBeNull($"Commit {i} should have an author");
+            commit.Author.Name.Should().NotBeNullOrEmpty($"Commit {i} author should have a name");
+            commit.Author.Email.Should().NotBeNullOrEmpty($"Commit {i} author should have an email");
+            commit.Author.Timestamp.Should().NotBe(default(System.DateTimeOffset), $"Commit {i} author should have a valid timestamp");
+
+            // Verify committer properties
+            commit.Committer.Should().NotBeNull($"Commit {i} should have a committer");
+            commit.Committer.Name.Should().NotBeNullOrEmpty($"Commit {i} committer should have a name");
+            commit.Committer.Email.Should().NotBeNullOrEmpty($"Commit {i} committer should have an email");
+            commit.Committer.Timestamp.Should().NotBe(default(System.DateTimeOffset), $"Commit {i} committer should have a valid timestamp");
+
+            // Log commit information for debugging
+            System.Console.WriteLine($"Commit {i}: {currentSha}");
+            System.Console.WriteLine($"  Message: {commit.Message.Split('\n')[0]}");
+            System.Console.WriteLine($"  Author: {commit.Author.Name} <{commit.Author.Email}>");
+            System.Console.WriteLine($"  Author Timestamp: {commit.Author.Timestamp}");
+            System.Console.WriteLine($"  Committer: {commit.Committer.Name} <{commit.Committer.Email}>");
+            System.Console.WriteLine($"  Committer Timestamp: {commit.Committer.Timestamp}");
+            System.Console.WriteLine($"  Parents: {commit.ParentSHA1s.Count}");
+
+            // For the first commit, verify specific expected values
+            if (i == 0)
+            {
+                currentSha.Should().Be("377a8477cff1f2c40108634b524dcf80a3e41db1", "First commit should be the start commit");
+                commit.ParentSHA1s.Count.Should().Be(1, "First commit should have 1 parent");
+                commit.ParentSHA1s[0].Should().Be("e912ee56e0686099a82aeb05796e46e5e0ba40e9", "First parent should match expected SHA");
+                commit.Message.Should().StartWith("Refactor API based on feedback", "Message should match expected text");
+                commit.Author.Name.Should().Contain("copilot", "Author name should contain 'copilot'");
+                commit.Author.Email.Should().Contain("Copilot@users.noreply.github.com", "Author email should match");
+            }
+
+            // Navigate to first parent for next iteration
+            if (i < 3) // Only navigate if we haven't reached the 4th commit yet
+            {
+                commit.ParentSHA1s.Should().NotBeEmpty($"Commit {i} should have at least one parent to continue navigation");
+                currentSha = commit.ParentSHA1s[0]; // Follow first parent
+            }
+        }
+    }
 }

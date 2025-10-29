@@ -1,17 +1,30 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace GitCore;
 
 public static class GitObjects
 {
+    /// <summary>
+    /// Represents a participant in a Git commit (author or committer).
+    /// </summary>
+    public record CommitParticipant(
+        string Name,
+        string Email,
+        DateTimeOffset Timestamp);
+
+    /// <summary>
+    /// Represents a Git commit with parsed metadata.
+    /// </summary>
     public record CommitObject(
         string TreeSHA1,
-        string? ParentSHA1,
-        string Author,
-        string Committer,
+        IReadOnlyList<string> ParentSHA1s,
+        CommitParticipant Author,
+        CommitParticipant Committer,
         string Message);
 
     public record TreeEntry(
@@ -22,15 +35,18 @@ public static class GitObjects
     public record TreeObject(
         IReadOnlyList<TreeEntry> Entries);
 
+    /// <summary>
+    /// Parses a Git commit object from its raw byte data.
+    /// </summary>
     public static CommitObject ParseCommit(ReadOnlyMemory<byte> data)
     {
         var text = Encoding.UTF8.GetString(data.Span);
         var lines = text.Split('\n');
 
         string? treeSHA1 = null;
-        string? parentSHA1 = null;
-        string? author = null;
-        string? committer = null;
+        var parentSHA1s = new List<string>();
+        string? authorLine = null;
+        string? committerLine = null;
         var messageLines = new List<string>();
         var inMessage = false;
 
@@ -50,26 +66,73 @@ public static class GitObjects
             }
             else if (line.StartsWith("parent "))
             {
-                parentSHA1 = line[7..];
+                parentSHA1s.Add(line[7..]);
             }
             else if (line.StartsWith("author "))
             {
-                author = line[7..];
+                authorLine = line[7..];
             }
             else if (line.StartsWith("committer "))
             {
-                committer = line[10..];
+                committerLine = line[10..];
             }
         }
 
         var message = string.Join("\n", messageLines).TrimEnd('\n');
 
+        if (treeSHA1 is null)
+            throw new InvalidOperationException("Commit missing tree");
+
+        if (authorLine is null)
+            throw new InvalidOperationException("Commit missing author");
+
+        if (committerLine is null)
+            throw new InvalidOperationException("Commit missing committer");
+
+        var author = ParseParticipant(authorLine);
+        var committer = ParseParticipant(committerLine);
+
         return new CommitObject(
-            treeSHA1 ?? throw new InvalidOperationException("Commit missing tree"),
-            parentSHA1,
-            author ?? throw new InvalidOperationException("Commit missing author"),
-            committer ?? throw new InvalidOperationException("Commit missing committer"),
+            treeSHA1,
+            parentSHA1s,
+            author,
+            committer,
             message);
+    }
+
+    /// <summary>
+    /// Parses a participant line (author or committer) from a Git commit.
+    /// Format: "Name &lt;email&gt; timestamp timezone"
+    /// </summary>
+    private static CommitParticipant ParseParticipant(string participantLine)
+    {
+        // Pattern: "Name <email> timestamp timezone"
+        // Example: "John Doe <john@example.com> 1234567890 +0000"
+        var match = Regex.Match(participantLine, @"^(.+?)\s+<(.+?)>\s+(\d+)\s+([\+\-]\d{4})$");
+
+        if (!match.Success)
+        {
+            throw new InvalidOperationException($"Invalid participant format: {participantLine}");
+        }
+
+        var name = match.Groups[1].Value;
+        var email = match.Groups[2].Value;
+        var timestampStr = match.Groups[3].Value;
+        var timezoneStr = match.Groups[4].Value;
+
+        // Parse Unix timestamp
+        var timestamp = long.Parse(timestampStr, CultureInfo.InvariantCulture);
+        var dateTime = DateTimeOffset.FromUnixTimeSeconds(timestamp);
+
+        // Parse timezone offset
+        var timezoneHours = int.Parse(timezoneStr.Substring(0, 3), CultureInfo.InvariantCulture);
+        var timezoneMinutes = int.Parse(timezoneStr.Substring(3, 2), CultureInfo.InvariantCulture);
+        var timezoneOffset = new TimeSpan(timezoneHours, timezoneMinutes, 0);
+
+        // Apply timezone offset
+        var dateTimeWithOffset = new DateTimeOffset(dateTime.DateTime, timezoneOffset);
+
+        return new CommitParticipant(name, email, dateTimeWithOffset);
     }
 
     public static TreeObject ParseTree(ReadOnlyMemory<byte> data)
