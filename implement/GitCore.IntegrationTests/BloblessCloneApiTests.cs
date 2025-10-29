@@ -15,34 +15,35 @@ public class BloblessCloneApiTests
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
 
         // Act
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
         // Assert
-        result.Should().NotBeNull("Result should not be null");
-        result.CommitSha.Should().Be(commitSha, "Commit SHA should match the requested commit");
-        result.ObjectsBySha.Should().NotBeNull("Objects dictionary should not be null");
-        result.ObjectsBySha.Count.Should().BeGreaterThan(0, "Should contain at least some objects");
+        repository.Should().NotBeNull("Repository should not be null");
+        repository.Objects.Should().NotBeNull("Objects dictionary should not be null");
+        repository.Objects.Count.Should().BeGreaterThan(0, "Should contain at least some objects");
 
         // Verify we have the commit
-        result.ObjectsBySha.Should().ContainKey(commitSha, "Should contain the requested commit");
-        var commitObject = result.ObjectsBySha[commitSha];
-        commitObject.Type.Should().Be(PackFile.ObjectType.Commit, "The requested SHA should be a commit");
+        repository.ContainsObject(commitSha).Should().BeTrue("Should contain the requested commit");
+        var commitObject = repository.GetObject(commitSha);
+        commitObject.Should().NotBeNull("Commit object should not be null");
+        commitObject!.Type.Should().Be(PackFile.ObjectType.Commit, "The requested SHA should be a commit");
 
         // Parse the commit to verify it has a tree
         var commit = GitObjects.ParseCommit(commitObject.Data);
         commit.TreeSHA1.Should().NotBeNullOrEmpty("Commit should have a tree SHA");
 
         // Verify we have the tree
-        result.ObjectsBySha.Should().ContainKey(commit.TreeSHA1, "Should contain the commit's tree");
-        var treeObject = result.ObjectsBySha[commit.TreeSHA1];
-        treeObject.Type.Should().Be(PackFile.ObjectType.Tree, "The tree SHA should point to a tree object");
+        repository.ContainsObject(commit.TreeSHA1).Should().BeTrue("Should contain the commit's tree");
+        var treeObject = repository.GetObject(commit.TreeSHA1);
+        treeObject.Should().NotBeNull("Tree object should not be null");
+        treeObject!.Type.Should().Be(PackFile.ObjectType.Tree, "The tree SHA should point to a tree object");
 
         // Verify NO blobs are included (since it's blobless)
-        var blobCount = result.ObjectsBySha.Values.Count(obj => obj.Type == PackFile.ObjectType.Blob);
+        var blobCount = repository.Objects.Values.Count(obj => obj.Type == PackFile.ObjectType.Blob);
         blobCount.Should().Be(0, "Blobless clone should not contain any blob objects");
 
         // Verify we have only commits and trees
-        foreach (var obj in result.ObjectsBySha.Values)
+        foreach (var obj in repository.Objects.Values)
         {
             (obj.Type == PackFile.ObjectType.Commit || obj.Type == PackFile.ObjectType.Tree)
                 .Should().BeTrue($"Object {obj.SHA1base16} should be either a commit or tree, but was {obj.Type}");
@@ -57,15 +58,15 @@ public class BloblessCloneApiTests
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
 
         // Act - fetch with depth of 1
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha, depth: 1);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha, depth: 1);
 
         // Assert
-        result.Should().NotBeNull("Result should not be null");
-        result.ObjectsBySha.Should().NotBeNull("Objects dictionary should not be null");
-        result.ObjectsBySha.Count.Should().BeGreaterThan(0, "Should contain objects");
+        repository.Should().NotBeNull("Repository should not be null");
+        repository.Objects.Should().NotBeNull("Objects dictionary should not be null");
+        repository.Objects.Count.Should().BeGreaterThan(0, "Should contain objects");
 
         // Count commits in the result
-        var commitCount = result.ObjectsBySha.Values.Count(obj => obj.Type == PackFile.ObjectType.Commit);
+        var commitCount = repository.Objects.Values.Count(obj => obj.Type == PackFile.ObjectType.Commit);
 
         // With depth 1, we should get exactly 1 commit (the shallow clone)
         commitCount.Should().Be(1, "With depth 1, should fetch exactly 1 commit");
@@ -79,12 +80,11 @@ public class BloblessCloneApiTests
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
 
         // Act
-        var result = LoadFromUrl.FetchBloblessClone(repositoryUrl, commitSha);
+        var repository = LoadFromUrl.FetchBloblessClone(repositoryUrl, commitSha);
 
         // Assert
-        result.Should().NotBeNull("Result should not be null");
-        result.CommitSha.Should().Be(commitSha, "Commit SHA should match");
-        result.ObjectsBySha.Count.Should().BeGreaterThan(0, "Should contain objects");
+        repository.Should().NotBeNull("Repository should not be null");
+        repository.Objects.Count.Should().BeGreaterThan(0, "Should contain objects");
     }
 
     [Fact]
@@ -93,21 +93,23 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
-        var commit = GitObjects.ParseCommit(result.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Act - navigate to ["implement", "GitCore"]
         var subtreeSha = LoadFromUrl.NavigateToSubtree(
             rootTreeSha,
             new[] { "implement", "GitCore" },
-            result.ObjectsBySha);
+            repository);
 
         // Assert
         subtreeSha.Should().NotBeNullOrEmpty("Should return a valid SHA");
-        result.ObjectsBySha.Should().ContainKey(subtreeSha, "Subtree SHA should exist in objects");
-        result.ObjectsBySha[subtreeSha].Type.Should().Be(
+        repository.ContainsObject(subtreeSha).Should().BeTrue("Subtree SHA should exist in objects");
+        var subtreeObject = repository.GetObject(subtreeSha);
+        subtreeObject!.Type.Should().Be(
             PackFile.ObjectType.Tree,
             "Navigated path should point to a tree");
     }
@@ -118,16 +120,17 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
-        var commit = GitObjects.ParseCommit(result.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Act - navigate with empty path
         var subtreeSha = LoadFromUrl.NavigateToSubtree(
             rootTreeSha,
             System.Array.Empty<string>(),
-            result.ObjectsBySha);
+            repository);
 
         // Assert
         subtreeSha.Should().Be(rootTreeSha, "Empty path should return the same tree SHA");
@@ -139,9 +142,10 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
-        var commit = GitObjects.ParseCommit(result.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Act & Assert
@@ -151,7 +155,7 @@ public class BloblessCloneApiTests
             LoadFromUrl.NavigateToSubtree(
                 rootTreeSha,
                 new[] { "nonexistent", "path" },
-                result.ObjectsBySha);
+                repository);
         }
         catch (System.InvalidOperationException ex)
         {
@@ -168,9 +172,10 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
-        var commit = GitObjects.ParseCommit(result.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Act & Assert - try to navigate through README.md as if it were a directory
@@ -180,7 +185,7 @@ public class BloblessCloneApiTests
             LoadFromUrl.NavigateToSubtree(
                 rootTreeSha,
                 new[] { "README.md", "something" },
-                result.ObjectsBySha);
+                repository);
         }
         catch (System.InvalidOperationException ex)
         {
@@ -197,13 +202,14 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
-        var commit = GitObjects.ParseCommit(result.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Act
-        var entries = LoadFromUrl.GetTreeEntries(rootTreeSha, result.ObjectsBySha);
+        var entries = LoadFromUrl.GetTreeEntries(rootTreeSha, repository);
 
         // Assert
         entries.Should().NotBeNull("Entries should not be null");
@@ -229,19 +235,20 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
-        var commit = GitObjects.ParseCommit(result.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Navigate to the "implement" directory
         var implementTreeSha = LoadFromUrl.NavigateToSubtree(
             rootTreeSha,
             new[] { "implement" },
-            result.ObjectsBySha);
+            repository);
 
         // Act
-        var entries = LoadFromUrl.GetTreeEntries(implementTreeSha, result.ObjectsBySha);
+        var entries = LoadFromUrl.GetTreeEntries(implementTreeSha, repository);
 
         // Assert
         entries.Should().NotBeNull("Entries should not be null");
@@ -257,7 +264,7 @@ public class BloblessCloneApiTests
         // Arrange
         var repositoryUrl = "https://github.com/Viir/GitCore.git";
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
-        var result = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
         var nonExistentSha = "0000000000000000000000000000000000000000";
 
@@ -265,7 +272,7 @@ public class BloblessCloneApiTests
         System.InvalidOperationException? exception = null;
         try
         {
-            LoadFromUrl.GetTreeEntries(nonExistentSha, result.ObjectsBySha);
+            LoadFromUrl.GetTreeEntries(nonExistentSha, repository);
         }
         catch (System.InvalidOperationException ex)
         {
@@ -289,20 +296,21 @@ public class BloblessCloneApiTests
         var commitSha = "1d6d1aea461e4c831d7d2d0526da57b333b6b34e";
 
         // Act 1: Fetch blobless clone
-        var cloneResult = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
+        var repository = await LoadFromUrl.FetchBloblessCloneAsync(repositoryUrl, commitSha);
 
         // Act 2: Get the root tree from commit
-        var commit = GitObjects.ParseCommit(cloneResult.ObjectsBySha[commitSha].Data);
+        var commitObject = repository.GetObject(commitSha);
+        var commit = GitObjects.ParseCommit(commitObject!.Data);
         var rootTreeSha = commit.TreeSHA1;
 
         // Act 3: Navigate to subdirectory
         var gitCoreTreeSha = LoadFromUrl.NavigateToSubtree(
             rootTreeSha,
             new[] { "implement", "GitCore" },
-            cloneResult.ObjectsBySha);
+            repository);
 
         // Act 4: List entries in the subdirectory
-        var entries = LoadFromUrl.GetTreeEntries(gitCoreTreeSha, cloneResult.ObjectsBySha);
+        var entries = LoadFromUrl.GetTreeEntries(gitCoreTreeSha, repository);
 
         // Assert
         entries.Should().NotBeNull("Should have entries");

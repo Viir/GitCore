@@ -424,25 +424,18 @@ public class LoadFromUrl
     }
 
     /// <summary>
-    /// Result of a blobless clone containing Git objects (commits and trees) indexed by SHA.
-    /// </summary>
-    public record BloblessCloneResult(
-        string CommitSha,
-        IReadOnlyDictionary<string, PackFile.PackObject> ObjectsBySha);
-
-    /// <summary>
     /// Fetches a blobless clone (commits and trees only, no blobs) from a Git repository.
     /// This allows consumers to navigate the tree structure themselves without fetching file contents.
     /// </summary>
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
     /// <param name="commitSha">Commit SHA to fetch</param>
-    /// <param name="depth">Clone depth to control how many commits to fetch. Default is 1 (only the specified commit).</param>
+    /// <param name="depth">Clone depth to control how many commits to fetch. Null means unlimited depth (full history).</param>
     /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default static client.</param>
-    /// <returns>A result containing the commit SHA and a dictionary of objects indexed by their SHA</returns>
-    public static async Task<BloblessCloneResult> FetchBloblessCloneAsync(
+    /// <returns>A repository containing the fetched commits and trees</returns>
+    public static async Task<Repository> FetchBloblessCloneAsync(
         string gitUrl,
         string commitSha,
-        int depth = 1,
+        int? depth = null,
         HttpClient? httpClient = null)
     {
         // Fetch blobless pack file (commit and trees only)
@@ -455,7 +448,7 @@ public class LoadFromUrl
         var objects = PackFile.ParseAllObjects(bloblessPackFileData, indexEntries);
         var objectsBySha = PackFile.GetObjectsBySHA1(objects);
 
-        return new BloblessCloneResult(commitSha, objectsBySha);
+        return new Repository(objectsBySha);
     }
 
     /// <summary>
@@ -464,13 +457,13 @@ public class LoadFromUrl
     /// </summary>
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
     /// <param name="commitSha">Commit SHA to fetch</param>
-    /// <param name="depth">Clone depth to control how many commits to fetch. Default is 1 (only the specified commit).</param>
+    /// <param name="depth">Clone depth to control how many commits to fetch. Null means unlimited depth (full history).</param>
     /// <param name="httpClient">Optional HttpClient to use for HTTP requests. If null, uses a default static client.</param>
-    /// <returns>A result containing the commit SHA and a dictionary of objects indexed by their SHA</returns>
-    public static BloblessCloneResult FetchBloblessClone(
+    /// <returns>A repository containing the fetched commits and trees</returns>
+    public static Repository FetchBloblessClone(
         string gitUrl,
         string commitSha,
-        int depth = 1,
+        int? depth = null,
         HttpClient? httpClient = null)
     {
         return FetchBloblessCloneAsync(gitUrl, commitSha, depth, httpClient).GetAwaiter().GetResult();
@@ -481,19 +474,21 @@ public class LoadFromUrl
     /// </summary>
     /// <param name="treeSha">The SHA of the root tree to start navigation from</param>
     /// <param name="path">Path components to navigate (e.g., ["implement", "GitCore"])</param>
-    /// <param name="objectsBySha">Dictionary of objects indexed by SHA</param>
+    /// <param name="repository">Repository containing the objects</param>
     /// <returns>The SHA of the subtree at the specified path</returns>
     /// <exception cref="InvalidOperationException">Thrown if the path cannot be navigated</exception>
     public static string NavigateToSubtree(
         string treeSha,
         FilePath path,
-        IReadOnlyDictionary<string, PackFile.PackObject> objectsBySha)
+        Repository repository)
     {
         var currentTreeSha = treeSha;
 
         foreach (var pathComponent in path)
         {
-            if (!objectsBySha.TryGetValue(currentTreeSha, out var treeObject))
+            var treeObject = repository.GetObject(currentTreeSha);
+
+            if (treeObject is null)
             {
                 throw new InvalidOperationException($"Tree {currentTreeSha} not found");
             }
@@ -526,14 +521,16 @@ public class LoadFromUrl
     /// Gets all entries (files and directories) from a tree.
     /// </summary>
     /// <param name="treeSha">The SHA of the tree to list</param>
-    /// <param name="objectsBySha">Dictionary of objects indexed by SHA</param>
+    /// <param name="repository">Repository containing the objects</param>
     /// <returns>A list of tree entries</returns>
     /// <exception cref="InvalidOperationException">Thrown if the tree cannot be found or parsed</exception>
     public static IReadOnlyList<GitObjects.TreeEntry> GetTreeEntries(
         string treeSha,
-        IReadOnlyDictionary<string, PackFile.PackObject> objectsBySha)
+        Repository repository)
     {
-        if (!objectsBySha.TryGetValue(treeSha, out var treeObject))
+        var treeObject = repository.GetObject(treeSha);
+
+        if (treeObject is null)
         {
             throw new InvalidOperationException($"Tree {treeSha} not found");
         }
