@@ -158,7 +158,7 @@ public class LoadFromUrl
 
         // Get all files from the tree recursively
         return GitObjects.GetAllFilesFromTree(
-            commit.TreeSHA1,
+            commit.TreeHash,
             sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
 
@@ -178,7 +178,7 @@ public class LoadFromUrl
 
         // Get files from the subdirectory
         return GitObjects.GetFilesFromSubdirectory(
-            commit.TreeSHA1,
+            commit.TreeHash,
             subdirectoryPath,
             sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
@@ -253,7 +253,7 @@ public class LoadFromUrl
         // Step 2: Navigate trees to find blob SHAs in the subdirectory
         var blobShas = new List<string>();
         CollectBlobShasFromSubdirectory(
-            commit.TreeSHA1,
+            commit.TreeHash,
             subdirectoryPath,
             sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null,
             blobShas);
@@ -320,7 +320,7 @@ public class LoadFromUrl
 
         // Step 6: Get files from the subdirectory (now we have all the blobs)
         return GitObjects.GetFilesFromSubdirectory(
-            commit.TreeSHA1,
+            commit.TreeHash,
             subdirectoryPath,
             sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
@@ -364,7 +364,7 @@ public class LoadFromUrl
                 throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
             }
 
-            currentTreeSHA1 = entry.SHA1;
+            currentTreeSHA1 = entry.HashBase16;
         }
 
         // Now collect all blob SHAs from this tree recursively
@@ -396,11 +396,11 @@ public class LoadFromUrl
         {
             if (entry.Mode is "40000") // Directory
             {
-                CollectBlobShasFromTree(entry.SHA1, getObjectBySHA1, blobShas);
+                CollectBlobShasFromTree(entry.HashBase16, getObjectBySHA1, blobShas);
             }
             else // File (blob)
             {
-                blobShas.Add(entry.SHA1);
+                blobShas.Add(entry.HashBase16);
             }
         }
     }
@@ -511,7 +511,7 @@ public class LoadFromUrl
                 throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
             }
 
-            currentTreeSha = entry.SHA1;
+            currentTreeSha = entry.HashBase16;
         }
 
         return currentTreeSha;

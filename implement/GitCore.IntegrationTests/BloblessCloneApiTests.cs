@@ -30,11 +30,11 @@ public class BloblessCloneApiTests
 
         // Parse the commit to verify it has a tree
         var commit = GitObjects.ParseCommit(commitObject.Data);
-        commit.TreeSHA1.Should().NotBeNullOrEmpty("Commit should have a tree SHA");
+        commit.TreeHash.Should().NotBeNullOrEmpty("Commit should have a tree SHA");
 
         // Verify we have the tree
-        repository.ContainsObject(commit.TreeSHA1).Should().BeTrue("Should contain the commit's tree");
-        var treeObject = repository.GetObject(commit.TreeSHA1);
+        repository.ContainsObject(commit.TreeHash).Should().BeTrue("Should contain the commit's tree");
+        var treeObject = repository.GetObject(commit.TreeHash);
         treeObject.Should().NotBeNull("Tree object should not be null");
         treeObject!.Type.Should().Be(PackFile.ObjectType.Tree, "The tree SHA should point to a tree object");
 
@@ -97,7 +97,7 @@ public class BloblessCloneApiTests
 
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Act - navigate to ["implement", "GitCore"]
         var subtreeSha = LoadFromUrl.NavigateToSubtree(
@@ -124,7 +124,7 @@ public class BloblessCloneApiTests
 
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Act - navigate with empty path
         var subtreeSha = LoadFromUrl.NavigateToSubtree(
@@ -146,7 +146,7 @@ public class BloblessCloneApiTests
 
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Act & Assert
         System.InvalidOperationException? exception = null;
@@ -176,7 +176,7 @@ public class BloblessCloneApiTests
 
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Act & Assert - try to navigate through README.md as if it were a directory
         System.InvalidOperationException? exception = null;
@@ -206,7 +206,7 @@ public class BloblessCloneApiTests
 
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Act
         var entries = LoadFromUrl.GetTreeEntries(rootTreeSha, repository);
@@ -224,7 +224,7 @@ public class BloblessCloneApiTests
         foreach (var entry in entries)
         {
             entry.Name.Should().NotBeNullOrEmpty("Entry should have a name");
-            entry.SHA1.Should().NotBeNullOrEmpty("Entry should have a SHA");
+            entry.HashBase16.Should().NotBeNullOrEmpty("Entry should have a SHA");
             entry.Mode.Should().NotBeNullOrEmpty("Entry should have a mode");
         }
     }
@@ -239,7 +239,7 @@ public class BloblessCloneApiTests
 
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Navigate to the "implement" directory
         var implementTreeSha = LoadFromUrl.NavigateToSubtree(
@@ -301,7 +301,7 @@ public class BloblessCloneApiTests
         // Act 2: Get the root tree from commit
         var commitObject = repository.GetObject(commitSha);
         var commit = GitObjects.ParseCommit(commitObject!.Data);
-        var rootTreeSha = commit.TreeSHA1;
+        var rootTreeSha = commit.TreeHash;
 
         // Act 3: Navigate to subdirectory
         var gitCoreTreeSha = LoadFromUrl.NavigateToSubtree(
@@ -361,7 +361,7 @@ public class BloblessCloneApiTests
             var commit = GitObjects.ParseCommit(commitObject.Data);
 
             // Verify commit has required properties
-            commit.TreeSHA1.Should().NotBeNullOrEmpty($"Commit {i} should have a tree SHA");
+            commit.TreeHash.Should().NotBeNullOrEmpty($"Commit {i} should have a tree SHA");
             commit.Message.Should().NotBeNullOrEmpty($"Commit {i} should have a message");
 
             // Verify author properties
@@ -383,14 +383,14 @@ public class BloblessCloneApiTests
             System.Console.WriteLine($"  Author Timestamp: {commit.Author.Timestamp}");
             System.Console.WriteLine($"  Committer: {commit.Committer.Name} <{commit.Committer.Email}>");
             System.Console.WriteLine($"  Committer Timestamp: {commit.Committer.Timestamp}");
-            System.Console.WriteLine($"  Parents: {commit.ParentSHA1s.Count}");
+            System.Console.WriteLine($"  Parents: {commit.ParentHashes.Count}");
 
             // For the first commit, verify specific expected values
             if (i == 0)
             {
                 currentSha.Should().Be("377a8477cff1f2c40108634b524dcf80a3e41db1", "First commit should be the start commit");
-                commit.ParentSHA1s.Count.Should().Be(1, "First commit should have 1 parent");
-                commit.ParentSHA1s[0].Should().Be("e912ee56e0686099a82aeb05796e46e5e0ba40e9", "First parent should match expected SHA");
+                commit.ParentHashes.Count.Should().Be(1, "First commit should have 1 parent");
+                commit.ParentHashes[0].Should().Be("e912ee56e0686099a82aeb05796e46e5e0ba40e9", "First parent should match expected SHA");
                 commit.Message.Should().StartWith("Refactor API based on feedback", "Message should match expected text");
                 commit.Author.Name.Should().Contain("copilot", "Author name should contain 'copilot'");
                 commit.Author.Email.Should().Contain("Copilot@users.noreply.github.com", "Author email should match");
@@ -399,8 +399,8 @@ public class BloblessCloneApiTests
             // Navigate to first parent for next iteration
             if (i < 3) // Only navigate if we haven't reached the 4th commit yet
             {
-                commit.ParentSHA1s.Should().NotBeEmpty($"Commit {i} should have at least one parent to continue navigation");
-                currentSha = commit.ParentSHA1s[0]; // Follow first parent
+                commit.ParentHashes.Should().NotBeEmpty($"Commit {i} should have at least one parent to continue navigation");
+                currentSha = commit.ParentHashes[0]; // Follow first parent
             }
         }
     }

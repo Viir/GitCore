@@ -10,9 +10,9 @@ namespace GitCore;
 public static class GitObjects
 {
     /// <summary>
-    /// Represents a participant in a Git commit (author or committer).
+    /// Represents a signature in a Git commit (author or committer).
     /// </summary>
-    public record CommitParticipant(
+    public record CommitSignature(
         string Name,
         string Email,
         DateTimeOffset Timestamp);
@@ -21,16 +21,16 @@ public static class GitObjects
     /// Represents a Git commit with parsed metadata.
     /// </summary>
     public record CommitObject(
-        string TreeSHA1,
-        IReadOnlyList<string> ParentSHA1s,
-        CommitParticipant Author,
-        CommitParticipant Committer,
+        string TreeHash,
+        IReadOnlyList<string> ParentHashes,
+        CommitSignature Author,
+        CommitSignature Committer,
         string Message);
 
     public record TreeEntry(
         string Mode,
         string Name,
-        string SHA1);
+        string HashBase16);
 
     public record TreeObject(
         IReadOnlyList<TreeEntry> Entries);
@@ -43,8 +43,8 @@ public static class GitObjects
         var text = Encoding.UTF8.GetString(data.Span);
         var lines = text.Split('\n');
 
-        string? treeSHA1 = null;
-        var parentSHA1s = new List<string>();
+        string? treeHash = null;
+        var parentHashes = new List<string>();
         string? authorLine = null;
         string? committerLine = null;
         var messageLines = new List<string>();
@@ -62,11 +62,11 @@ public static class GitObjects
             }
             else if (line.StartsWith("tree "))
             {
-                treeSHA1 = line[5..];
+                treeHash = line[5..];
             }
             else if (line.StartsWith("parent "))
             {
-                parentSHA1s.Add(line[7..]);
+                parentHashes.Add(line[7..]);
             }
             else if (line.StartsWith("author "))
             {
@@ -80,7 +80,7 @@ public static class GitObjects
 
         var message = string.Join("\n", messageLines).TrimEnd('\n');
 
-        if (treeSHA1 is null)
+        if (treeHash is null)
             throw new InvalidOperationException("Commit missing tree");
 
         if (authorLine is null)
@@ -89,30 +89,30 @@ public static class GitObjects
         if (committerLine is null)
             throw new InvalidOperationException("Commit missing committer");
 
-        var author = ParseParticipant(authorLine);
-        var committer = ParseParticipant(committerLine);
+        var author = ParseSignature(authorLine);
+        var committer = ParseSignature(committerLine);
 
         return new CommitObject(
-            treeSHA1,
-            parentSHA1s,
+            treeHash,
+            parentHashes,
             author,
             committer,
             message);
     }
 
     /// <summary>
-    /// Parses a participant line (author or committer) from a Git commit.
+    /// Parses a signature line (author or committer) from a Git commit.
     /// Format: "Name &lt;email&gt; timestamp timezone"
     /// </summary>
-    private static CommitParticipant ParseParticipant(string participantLine)
+    private static CommitSignature ParseSignature(string signatureLine)
     {
         // Pattern: "Name <email> timestamp timezone"
         // Example: "John Doe <john@example.com> 1234567890 +0000"
-        var match = Regex.Match(participantLine, @"^(.+?)\s+<(.+?)>\s+(\d+)\s+([\+\-]\d{4})$");
+        var match = Regex.Match(signatureLine, @"^(.+?)\s+<(.+?)>\s+(\d+)\s+([\+\-]\d{4})$");
 
         if (!match.Success)
         {
-            throw new InvalidOperationException($"Invalid participant format: {participantLine}");
+            throw new InvalidOperationException($"Invalid signature format: {signatureLine}");
         }
 
         var name = match.Groups[1].Value;
@@ -132,7 +132,7 @@ public static class GitObjects
         // Apply timezone offset
         var dateTimeWithOffset = new DateTimeOffset(dateTime.DateTime, timezoneOffset);
 
-        return new CommitParticipant(name, email, dateTimeWithOffset);
+        return new CommitSignature(name, email, dateTimeWithOffset);
     }
 
     public static TreeObject ParseTree(ReadOnlyMemory<byte> data)
@@ -165,12 +165,12 @@ public static class GitObjects
             var name = Encoding.UTF8.GetString(span[offset..nameEnd]);
             offset = nameEnd + 1; // Skip null byte
 
-            // Read SHA1 (20 bytes)
-            var sha1Bytes = span.Slice(offset, 20);
-            var sha1 = Convert.ToHexStringLower(sha1Bytes);
+            // Read hash (20 bytes for SHA-1, but we support future hash algorithms)
+            var hashBytes = span.Slice(offset, 20);
+            var hashBase16 = Convert.ToHexStringLower(hashBytes);
             offset += 20;
 
-            entries.Add(new TreeEntry(mode, name, sha1));
+            entries.Add(new TreeEntry(mode, name, hashBase16));
         }
 
         return new TreeObject(entries);
@@ -182,19 +182,19 @@ public static class GitObjects
     }
 
     public static IReadOnlyDictionary<string, ReadOnlyMemory<byte>> GetFilesFromTree(
-        string treeSHA1,
-        IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1)
+        string treeHashBase16,
+        IReadOnlyDictionary<string, PackFile.PackObject> objectsByHashBase16)
     {
         var files = new Dictionary<string, ReadOnlyMemory<byte>>();
 
-        if (!objectsBySHA1.TryGetValue(treeSHA1, out var treeObject))
+        if (!objectsByHashBase16.TryGetValue(treeHashBase16, out var treeObject))
         {
-            throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
+            throw new InvalidOperationException($"Tree {treeHashBase16} not found in pack file");
         }
 
         if (treeObject.Type is not PackFile.ObjectType.Tree)
         {
-            throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
+            throw new InvalidOperationException($"Object {treeHashBase16} is not a tree");
         }
 
         var tree = ParseTree(treeObject.Data);
@@ -203,7 +203,7 @@ public static class GitObjects
         {
             if (entry.Mode.StartsWith("100")) // Regular file
             {
-                if (objectsBySHA1.TryGetValue(entry.SHA1, out var blobObject))
+                if (objectsByHashBase16.TryGetValue(entry.HashBase16, out var blobObject))
                 {
                     if (blobObject.Type is PackFile.ObjectType.Blob)
                     {
@@ -222,8 +222,8 @@ public static class GitObjects
     }
 
     public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetAllFilesFromTree(
-        string treeSHA1,
-        Func<string, PackFile.PackObject?> getObjectBySHA1,
+        string treeHashBase16,
+        Func<string, PackFile.PackObject?> getObjectByHashBase16,
         IReadOnlyList<string>? pathPrefix = null)
     {
         var files = new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
@@ -231,15 +231,15 @@ public static class GitObjects
 
         pathPrefix ??= [];
 
-        var treeObject = getObjectBySHA1(treeSHA1);
+        var treeObject = getObjectByHashBase16(treeHashBase16);
         if (treeObject is null)
         {
-            throw new InvalidOperationException($"Tree {treeSHA1} not found in pack file");
+            throw new InvalidOperationException($"Tree {treeHashBase16} not found in pack file");
         }
 
         if (treeObject.Type is not PackFile.ObjectType.Tree)
         {
-            throw new InvalidOperationException($"Object {treeSHA1} is not a tree");
+            throw new InvalidOperationException($"Object {treeHashBase16} is not a tree");
         }
 
         var tree = ParseTree(treeObject.Data);
@@ -250,7 +250,7 @@ public static class GitObjects
 
             if (entry.Mode.StartsWith("100")) // Regular file
             {
-                var blobObject = getObjectBySHA1(entry.SHA1);
+                var blobObject = getObjectByHashBase16(entry.HashBase16);
                 if (blobObject is not null && blobObject.Type is PackFile.ObjectType.Blob)
                 {
                     files[filePath] = GetBlobContent(blobObject.Data);
@@ -259,7 +259,7 @@ public static class GitObjects
             else if (entry.Mode is "40000") // Directory
             {
                 // Recursively process subdirectories
-                var subFiles = GetAllFilesFromTree(entry.SHA1, getObjectBySHA1, filePath);
+                var subFiles = GetAllFilesFromTree(entry.HashBase16, getObjectByHashBase16, filePath);
                 foreach (var (subPath, content) in subFiles)
                 {
                     files[subPath] = content;
@@ -273,29 +273,29 @@ public static class GitObjects
     /// <summary>
     /// Gets files from a specific subdirectory within a tree.
     /// </summary>
-    /// <param name="treeSHA1">The SHA1 of the root tree</param>
+    /// <param name="treeHashBase16">The hash of the root tree</param>
     /// <param name="subdirectoryPath">Path components to the subdirectory (e.g., ["implement", "GitCore"])</param>
-    /// <param name="getObjectBySHA1">Function to retrieve objects by SHA1</param>
+    /// <param name="getObjectByHashBase16">Function to retrieve objects by hash</param>
     /// <returns>Dictionary of file paths (relative to subdirectory) to their contents</returns>
     public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetFilesFromSubdirectory(
-        string treeSHA1,
+        string treeHashBase16,
         IReadOnlyList<string> subdirectoryPath,
-        Func<string, PackFile.PackObject?> getObjectBySHA1)
+        Func<string, PackFile.PackObject?> getObjectByHashBase16)
     {
         // Navigate to the subdirectory by traversing the tree
-        var currentTreeSHA1 = treeSHA1;
+        var currentTreeHash = treeHashBase16;
 
         foreach (var pathComponent in subdirectoryPath)
         {
-            var treeObject = getObjectBySHA1(currentTreeSHA1);
+            var treeObject = getObjectByHashBase16(currentTreeHash);
             if (treeObject is null)
             {
-                throw new InvalidOperationException($"Tree {currentTreeSHA1} not found");
+                throw new InvalidOperationException($"Tree {currentTreeHash} not found");
             }
 
             if (treeObject.Type is not PackFile.ObjectType.Tree)
             {
-                throw new InvalidOperationException($"Object {currentTreeSHA1} is not a tree");
+                throw new InvalidOperationException($"Object {currentTreeHash} is not a tree");
             }
 
             var tree = ParseTree(treeObject.Data);
@@ -311,30 +311,30 @@ public static class GitObjects
                 throw new InvalidOperationException($"Path component '{pathComponent}' is not a directory");
             }
 
-            currentTreeSHA1 = entry.SHA1;
+            currentTreeHash = entry.HashBase16;
         }
 
         // Now get all files from the subdirectory tree
-        return GetAllFilesFromTree(currentTreeSHA1, getObjectBySHA1, pathPrefix: []);
+        return GetAllFilesFromTree(currentTreeHash, getObjectByHashBase16, pathPrefix: []);
     }
 
     public static ReadOnlyMemory<byte> GetFileFromCommit(
-        string commitSHA1,
+        string commitHashBase16,
         string fileName,
-        IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1)
+        IReadOnlyDictionary<string, PackFile.PackObject> objectsByHashBase16)
     {
-        if (!objectsBySHA1.TryGetValue(commitSHA1, out var commitObject))
+        if (!objectsByHashBase16.TryGetValue(commitHashBase16, out var commitObject))
         {
-            throw new InvalidOperationException($"Commit {commitSHA1} not found in pack file");
+            throw new InvalidOperationException($"Commit {commitHashBase16} not found in pack file");
         }
 
         if (commitObject.Type is not PackFile.ObjectType.Commit)
         {
-            throw new InvalidOperationException($"Object {commitSHA1} is not a commit");
+            throw new InvalidOperationException($"Object {commitHashBase16} is not a commit");
         }
 
         var commit = ParseCommit(commitObject.Data);
-        var files = GetFilesFromTree(commit.TreeSHA1, objectsBySHA1);
+        var files = GetFilesFromTree(commit.TreeHash, objectsByHashBase16);
 
         if (!files.TryGetValue(fileName, out var fileContent))
         {
