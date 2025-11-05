@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -448,7 +449,7 @@ public class LoadFromUrl
         var objects = PackFile.ParseAllObjects(bloblessPackFileData, indexEntries);
         var objectsBySha = PackFile.GetObjectsBySHA1(objects);
 
-        return new Repository(objectsBySha);
+        return new Repository(objectsBySha.ToImmutableDictionary());
     }
 
     /// <summary>

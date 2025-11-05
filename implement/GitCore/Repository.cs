@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+using System.Collections.Immutable;
 
 namespace GitCore;
 
@@ -6,44 +6,37 @@ namespace GitCore;
 /// Represents an immutable Git repository containing fetched objects (commits, trees, and blobs).
 /// </summary>
 public record Repository(
-    IReadOnlyDictionary<string, PackFile.PackObject> Objects)
+    ImmutableDictionary<string, PackFile.PackObject> Objects)
 {
     /// <summary>
     /// Creates an empty repository.
     /// </summary>
     public static Repository Empty { get; } = new Repository(
-        new Dictionary<string, PackFile.PackObject>());
+        ImmutableDictionary<string, PackFile.PackObject>.Empty);
 
     /// <summary>
     /// Creates a new repository with additional objects merged in.
     /// </summary>
     /// <param name="additionalObjects">Additional objects to add to the repository</param>
     /// <returns>A new repository containing all objects from this repository plus the additional objects</returns>
-    public Repository WithObjects(IReadOnlyDictionary<string, PackFile.PackObject> additionalObjects)
+    public Repository WithObjects(ImmutableDictionary<string, PackFile.PackObject> additionalObjects)
     {
-        var merged = new Dictionary<string, PackFile.PackObject>(Objects);
-
-        foreach (var (sha, obj) in additionalObjects)
-        {
-            merged[sha] = obj;
-        }
-
-        return new Repository(merged);
+        return new Repository(Objects.AddRange(additionalObjects));
     }
 
     /// <summary>
-    /// Gets an object by its SHA, or null if not found.
+    /// Gets an object by its hash, or null if not found.
     /// </summary>
-    public PackFile.PackObject? GetObject(string sha)
+    public PackFile.PackObject? GetObject(string hash)
     {
-        return Objects.TryGetValue(sha, out var obj) ? obj : null;
+        return Objects.TryGetValue(hash, out var obj) ? obj : null;
     }
 
     /// <summary>
-    /// Checks if the repository contains an object with the given SHA.
+    /// Checks if the repository contains an object with the given hash.
     /// </summary>
-    public bool ContainsObject(string sha)
+    public bool ContainsObject(string hash)
     {
-        return Objects.ContainsKey(sha);
+        return Objects.ContainsKey(hash);
     }
 }
