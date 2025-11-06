@@ -1,6 +1,6 @@
 # GitCore
 
-Pure managed C# implementation for reading files from Git repositories.
+Pure managed C# implementation for reading from Git repositories.
 
 ## Features
 
