@@ -34,25 +34,24 @@ public class ParseCommitTests
         // Parse the commit
         var commit = GitObjects.ParseCommit(commitObject.Data);
 
-        // Verify commit properties
-        commit.Should().NotBeNull("Commit should be parsed successfully");
-        commit.TreeHash.Should().NotBeNullOrEmpty("Commit should have a tree hash");
-        commit.Message.Should().NotBeNullOrEmpty("Commit should have a message");
+        // Assert exact values for the commit
+        commit.TreeHash.Should().Be("8ba2247ab0a7fca6750be46db85f80344ae0df44", "Tree hash should match");
+        commit.ParentHashes.Should().BeEmpty("This is the initial commit with no parents");
 
-        // Verify author properties
-        commit.Author.Should().NotBeNull("Commit should have an author");
-        commit.Author.Name.Should().NotBeNullOrEmpty("Author should have a name");
-        commit.Author.Email.Should().NotBeNullOrEmpty("Author should have an email");
-        commit.Author.Timestamp.Should().NotBe(default(DateTimeOffset), "Author should have a valid timestamp");
+        // Assert author details
+        commit.Author.Name.Should().Be("Michael Rätzel", "Author name should match");
+        commit.Author.Email.Should().Be("michael@xn--michaelrtzel-ncb.com", "Author email should match");
+        commit.Author.Timestamp.Should().Be(new DateTimeOffset(2025, 10, 27, 7, 42, 57, TimeSpan.Zero),
+            "Author timestamp should match");
 
-        // Verify committer properties
-        commit.Committer.Should().NotBeNull("Commit should have a committer");
-        commit.Committer.Name.Should().NotBeNullOrEmpty("Committer should have a name");
-        commit.Committer.Email.Should().NotBeNullOrEmpty("Committer should have an email");
-        commit.Committer.Timestamp.Should().NotBe(default(DateTimeOffset), "Committer should have a valid timestamp");
+        // Assert committer details
+        commit.Committer.Name.Should().Be("Michael Rätzel", "Committer name should match");
+        commit.Committer.Email.Should().Be("michael@xn--michaelrtzel-ncb.com", "Committer email should match");
+        commit.Committer.Timestamp.Should().Be(new DateTimeOffset(2025, 10, 27, 7, 47, 18, TimeSpan.Zero),
+            "Committer timestamp should match");
 
-        // Verify parent hashes collection exists (may be empty for initial commit)
-        commit.ParentHashes.Should().NotBeNull("Commit should have a ParentHashes collection");
+        // Assert message
+        commit.Message.Should().StartWith("basic repository setup", "Commit message should match");
     }
 
     [Fact]
@@ -72,21 +71,33 @@ public class ParseCommitTests
         var commitObject = objectsBySHA1[commitHash];
         var commit = GitObjects.ParseCommit(commitObject.Data);
 
-        // Verify specific commit metadata
-        // The tree hash should be consistent
+        // Verify the tree hash is exactly 40 characters and matches
         commit.TreeHash.Should().HaveLength(40, "Tree hash should be a 40-character hex string");
+        commit.TreeHash.Should().Be("8ba2247ab0a7fca6750be46db85f80344ae0df44", "Tree hash should match exact value");
 
-        // Verify the commit message starts with expected text (based on typical commit messages)
-        commit.Message.Should().NotBeNullOrEmpty("Commit should have a message");
+        // Verify author and committer signatures match exactly
+        commit.Author.Name.Should().Be("Michael Rätzel", "Author name should match exactly");
+        commit.Author.Email.Should().Be("michael@xn--michaelrtzel-ncb.com", "Author email should match exactly");
+        commit.Author.Email.Should().Contain("@", "Author email should be well-formed");
 
-        // Verify author and committer have properly formatted emails
-        commit.Author.Email.Should().Contain("@", "Author email should contain @");
-        commit.Committer.Email.Should().Contain("@", "Committer email should contain @");
+        commit.Committer.Name.Should().Be("Michael Rätzel", "Committer name should match exactly");
+        commit.Committer.Email.Should().Be("michael@xn--michaelrtzel-ncb.com", "Committer email should match exactly");
+        commit.Committer.Email.Should().Contain("@", "Committer email should be well-formed");
 
-        // Verify timestamps are in a reasonable range (after 2020)
-        var year2020 = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        (commit.Author.Timestamp > year2020).Should().BeTrue("Author timestamp should be after 2020");
-        (commit.Committer.Timestamp > year2020).Should().BeTrue("Committer timestamp should be after 2020");
+        // Verify exact timestamp components
+        commit.Author.Timestamp.Year.Should().Be(2025, "Author timestamp year should be 2025");
+        commit.Author.Timestamp.Month.Should().Be(10, "Author timestamp month should be October");
+        commit.Author.Timestamp.Day.Should().Be(27, "Author timestamp day should be 27");
+
+        commit.Committer.Timestamp.Year.Should().Be(2025, "Committer timestamp year should be 2025");
+        commit.Committer.Timestamp.Month.Should().Be(10, "Committer timestamp month should be October");
+        commit.Committer.Timestamp.Day.Should().Be(27, "Committer timestamp day should be 27");
+
+        // Verify parent hashes
+        commit.ParentHashes.Should().BeEmpty("This is an initial commit with no parents");
+
+        // Verify commit message
+        commit.Message.Should().StartWith("basic repository setup", "Message should match");
     }
 
     [Fact]
@@ -163,24 +174,25 @@ public class ParseCommitTests
 
         var indexEntries = PackIndex.ParsePackIndexV2(idxFileData);
         var objects = PackFile.ParseAllObjects(packFileData, indexEntries);
+        var objectsBySHA1 = PackFile.GetObjectsBySHA1(objects);
 
-        // Find all commits and check their parent relationships
-        var commitObjects = objects.Where(obj => obj.Type == PackFile.ObjectType.Commit).ToList();
+        // For the test data commit 14eb05f5beac67cdf2a229394baa626338a3d92e
+        var commitHash = "14eb05f5beac67cdf2a229394baa626338a3d92e";
+        var commitObject = objectsBySHA1[commitHash];
+        var commit = GitObjects.ParseCommit(commitObject.Data);
 
-        foreach (var commitObject in commitObjects)
+        // This is an initial commit, so it should have no parents
+        commit.ParentHashes.Should().BeEmpty("Initial commit should have no parent hashes");
+
+        // Verify that ParentHashes is a proper collection (not null)
+        commit.ParentHashes.Should().NotBeNull("ParentHashes should be a valid collection");
+
+        // General validation: if there were parents, they would be 40-char hex strings
+        foreach (var parentHash in commit.ParentHashes)
         {
-            var commit = GitObjects.ParseCommit(commitObject.Data);
-
-            // Verify parent hashes are valid (either empty or contain valid hex strings)
-            foreach (var parentHash in commit.ParentHashes)
-            {
-                parentHash.Should().HaveLength(40,
-                    $"Parent hash in commit {commitObject.SHA1base16} should be a 40-character hex string");
-
-                // Verify it's a valid hex string
-                parentHash.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
-                    .Should().BeTrue($"Parent hash {parentHash} should be a valid lowercase hex string");
-            }
+            parentHash.Should().HaveLength(40, "Parent hash should be a 40-character hex string");
+            parentHash.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
+                .Should().BeTrue($"Parent hash {parentHash} should be a valid lowercase hex string");
         }
     }
 

@@ -227,20 +227,14 @@ public class LoadFromUrl
         Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache,
         Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob)
     {
-        // Step 1: Fetch blobless pack file (commit and trees only)
-        var bloblessPackFileData =
-            await GitSmartHttp.FetchBloblessPackFileAsync(gitUrl, commitSha, depth: 1, httpClient);
+        // Step 1: Fetch blobless clone (commit and trees only) using the shared method
+        var repository = await FetchBloblessCloneAsync(gitUrl, commitSha, depth: 1, httpClient);
 
-        // Parse the blobless pack file
-        var indexResult = PackIndex.GeneratePackIndexV2(bloblessPackFileData);
-        var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);
-        var objects = PackFile.ParseAllObjects(bloblessPackFileData, indexEntries);
-        var objectsBySHA1 = new Dictionary<string, PackFile.PackObject>(PackFile.GetObjectsBySHA1(objects));
-
-        // Get the commit object
-        if (!objectsBySHA1.TryGetValue(commitSha, out var commitObject))
+        // Get the commit and parse it
+        var commitObject = repository.GetObject(commitSha);
+        if (commitObject is null)
         {
-            throw new InvalidOperationException($"Commit {commitSha} not found in pack file");
+            throw new InvalidOperationException($"Commit {commitSha} not found in repository");
         }
 
         if (commitObject.Type is not PackFile.ObjectType.Commit)
@@ -248,7 +242,6 @@ public class LoadFromUrl
             throw new InvalidOperationException($"Object {commitSha} is not a commit");
         }
 
-        // Parse the commit to get the tree SHA
         var commit = GitObjects.ParseCommit(commitObject.Data);
 
         // Step 2: Navigate trees to find blob SHAs in the subdirectory
@@ -256,7 +249,7 @@ public class LoadFromUrl
         CollectBlobShasFromSubdirectory(
             commit.TreeHash,
             subdirectoryPath,
-            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null,
+            sha => repository.GetObject(sha),
             blobShas);
 
         // Step 3: Check cache for blobs we already have
@@ -305,25 +298,22 @@ public class LoadFromUrl
             }
         }
 
-        // Step 5: Build the final dictionary with all objects (trees from step 1 + blobs from steps 3&4)
-        foreach (var (sha, blob) in cachedBlobs)
-        {
-            if (!objectsBySHA1.ContainsKey(sha))
-            {
-                objectsBySHA1[sha] =
-                    new PackFile.PackObject(
-                        PackFile.ObjectType.Blob,
-                        blob.Length,
-                        blob,
-                        sha);
-            }
-        }
+        // Step 5: Merge repository with the fetched blobs
+        var blobPackObjects = cachedBlobs.ToDictionary(
+            kvp => kvp.Key,
+            kvp => new PackFile.PackObject(
+                PackFile.ObjectType.Blob,
+                kvp.Value.Length,
+                kvp.Value,
+                kvp.Key));
+
+        var mergedRepository = repository.WithObjects(blobPackObjects.ToImmutableDictionary());
 
         // Step 6: Get files from the subdirectory (now we have all the blobs)
         return GitObjects.GetFilesFromSubdirectory(
             commit.TreeHash,
             subdirectoryPath,
-            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+            sha => mergedRepository.GetObject(sha));
     }
 
     /// <summary>
