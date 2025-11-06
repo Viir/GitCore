@@ -90,4 +90,50 @@ public class ParsePackFileTests
         result.ReverseIndexData.Length.Should().Be(expectedRevFileData.Length, "Generated .rev file should have the same size");
         result.ReverseIndexData.Span.SequenceEqual(expectedRevFileData.Span).Should().BeTrue("Generated .rev file should match expected content");
     }
+
+    [Fact]
+    public void ParseAllObjectsDirectly_produces_same_results_as_index_based_parsing()
+    {
+        var filesFromClone = TestData.LoadTestDataFiles_2025_10_27();
+
+        var packFileData =
+            filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.pack"]];
+
+        var idxFileData =
+            filesFromClone[["objects", "pack", "pack-f0af0a07967292ae02df043ff4169bee06f6c143.idx"]];
+
+        // Parse using the old method (index-based)
+        var indexEntries = PackIndex.ParsePackIndexV2(idxFileData);
+        var objectsFromIndexBased = PackFile.ParseAllObjects(packFileData, indexEntries);
+
+        // Parse using the new method (direct)
+        var objectsFromDirect = PackFile.ParseAllObjectsDirectly(packFileData);
+
+        // Verify we got the same number of objects
+        objectsFromDirect.Count.Should().Be(objectsFromIndexBased.Count, 
+            "Direct parsing should produce the same number of objects as index-based parsing");
+
+        // Create dictionaries for comparison
+        var objectsFromIndexBasedDict = PackFile.GetObjectsBySHA1(objectsFromIndexBased);
+        var objectsFromDirectDict = PackFile.GetObjectsBySHA1(objectsFromDirect);
+
+        // Verify all objects have the same SHA1 keys
+        objectsFromDirectDict.Keys.Should().BeEquivalentTo(objectsFromIndexBasedDict.Keys,
+            "Direct parsing should produce objects with the same SHA1 hashes");
+
+        // Verify each object has the same type and data
+        foreach (var (sha1, directObj) in objectsFromDirectDict)
+        {
+            var indexBasedObj = objectsFromIndexBasedDict[sha1];
+            
+            directObj.Type.Should().Be(indexBasedObj.Type, 
+                $"Object {sha1} should have the same type in both parsing methods");
+            
+            directObj.Size.Should().Be(indexBasedObj.Size, 
+                $"Object {sha1} should have the same size in both parsing methods");
+            
+            directObj.Data.Span.SequenceEqual(indexBasedObj.Data.Span).Should().BeTrue(
+                $"Object {sha1} should have the same data in both parsing methods");
+        }
+    }
 }
