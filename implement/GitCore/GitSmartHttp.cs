@@ -215,14 +215,18 @@ public static class GitSmartHttp
     /// </summary>
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
     /// <param name="commitSha">Commit SHA to fetch</param>
+    /// <param name="depth">Clone depth to control how many commits to fetch. Null means unlimited depth (full history).</param>
     /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
     /// <returns>Pack file data containing commit and trees but no blobs</returns>
     public static async Task<ReadOnlyMemory<byte>> FetchBloblessPackFileAsync(
         string gitUrl,
         string commitSha,
+        int? depth = null,
         HttpClient? httpClient = null)
     {
-        var requestBody = BuildUploadPackRequest(commitSha, shallowDepth: 1, filter: "blob:none");
+        var requestBody =
+            BuildUploadPackRequest(commitSha, shallowDepth: depth, filter: "blob:none");
+
         return await FetchPackFileWithRequestBodyAsync(gitUrl, requestBody, httpClient);
     }
 
@@ -238,7 +242,9 @@ public static class GitSmartHttp
         IReadOnlyList<string> objectShas,
         HttpClient? httpClient = null)
     {
-        var requestBody = BuildUploadPackRequestForSpecificObjects(objectShas);
+        var requestBody =
+            BuildUploadPackRequestForSpecificObjects(objectShas);
+
         return await FetchPackFileWithRequestBodyAsync(gitUrl, requestBody, httpClient);
     }
 
