@@ -100,6 +100,97 @@ public static class GitSmartHttp
     }
 
     /// <summary>
+    /// Resolves the target of a symbolic reference from a remote repository using the Git Smart HTTP protocol.
+    /// </summary>
+    /// <param name="baseUrl">Base URL like https://github.com</param>
+    /// <param name="owner">Repository owner</param>
+    /// <param name="repo">Repository name</param>
+    /// <param name="symbolicRef">Symbolic reference name to resolve</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
+    /// <returns>The fully qualified reference that the symbolic ref points to (e.g., refs/heads/main)</returns>
+    public static async Task<string> FetchSymbolicRefTargetAsync(
+        string baseUrl,
+        string owner,
+        string repo,
+        string symbolicRef,
+        HttpClient? httpClient = null)
+    {
+        var gitUrl = $"{baseUrl}/{owner}/{repo}.git";
+
+        return await FetchSymbolicRefTargetAsync(gitUrl, symbolicRef, httpClient);
+    }
+
+    /// <summary>
+    /// Resolves the target of a symbolic reference from a remote repository using the Git Smart HTTP protocol.
+    /// </summary>
+    /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
+    /// <param name="symbolicRef">Symbolic reference name to resolve</param>
+    /// <param name="httpClient">Optional HttpClient to use for requests. If null, uses a default static client.</param>
+    /// <returns>The fully qualified reference that the symbolic ref points to (e.g., refs/heads/main)</returns>
+    public static async Task<string> FetchSymbolicRefTargetAsync(
+        string gitUrl,
+        string symbolicRef,
+        HttpClient? httpClient = null)
+    {
+        httpClient ??= s_httpClient;
+
+        if (!gitUrl.EndsWith(".git", StringComparison.Ordinal))
+        {
+            gitUrl = $"{gitUrl}.git";
+        }
+
+        var refsUrl = $"{gitUrl}/info/refs?service=git-upload-pack";
+
+        using var refsRequest = new HttpRequestMessage(HttpMethod.Get, refsUrl);
+        using var refsResponse = await httpClient.SendAsync(refsRequest);
+        refsResponse.EnsureSuccessStatusCode();
+
+        var responseData = await refsResponse.Content.ReadAsByteArrayAsync();
+        var responseText = Encoding.UTF8.GetString(responseData);
+        var lines = responseText.Split('\n');
+
+        foreach (var rawLine in lines)
+        {
+            if (rawLine.Length <= 4)
+            {
+                continue;
+            }
+
+            var line = rawLine.TrimEnd('\r');
+
+            if (line is "0000")
+            {
+                continue;
+            }
+
+            var payload = line[4..];
+
+            var nulIndex = payload.IndexOf('\0');
+
+            if (nulIndex >= 0)
+            {
+                var capabilitiesSegment = payload[(nulIndex + 1)..];
+
+                if (TryParseSymrefMapping(capabilitiesSegment, symbolicRef, out var targetRef))
+                {
+                    return targetRef;
+                }
+            }
+
+            var refEntry = nulIndex >= 0 ? payload[..nulIndex] : payload;
+            var parts = refEntry.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+
+            if (parts.Length is 2 && string.Equals(parts[1], symbolicRef, StringComparison.Ordinal))
+            {
+                // Symbolic ref resolved to direct reference entry (detached scenario).
+                return parts[1];
+            }
+        }
+
+        throw new InvalidOperationException($"Symbolic ref '{symbolicRef}' not found at {gitUrl}");
+    }
+
+    /// <summary>
     /// Fetches a pack file containing only objects needed for a specific subdirectory.
     /// </summary>
     /// <param name="gitUrl">Git repository URL like https://github.com/owner/repo.git</param>
@@ -286,6 +377,50 @@ public static class GitSmartHttp
 
         var responseData = await packResponse.Content.ReadAsByteArrayAsync();
         return ExtractPackFileFromResponse(responseData);
+    }
+
+    private static bool TryParseSymrefMapping(
+        string capabilitiesSegment,
+        string symbolicRef,
+        out string targetRef)
+    {
+        targetRef = string.Empty;
+
+        if (string.IsNullOrEmpty(capabilitiesSegment))
+        {
+            return false;
+        }
+
+        var capabilityEntries =
+            capabilitiesSegment.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var entry in capabilityEntries)
+        {
+            if (!entry.StartsWith("symref=", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var mapping = entry["symref=".Length..];
+            var separatorIndex = mapping.IndexOf(':');
+
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            var source = mapping[..separatorIndex];
+
+            if (!string.Equals(source, symbolicRef, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            targetRef = mapping[(separatorIndex + 1)..];
+            return true;
+        }
+
+        return false;
     }
 
     private static byte[] BuildUploadPackRequest(string commitSha, int? shallowDepth = null, string? filter = null)
