@@ -95,8 +95,9 @@ public static class PackFile
         var span = dataWithoutChecksum.Span;
 
         // We'll parse objects sequentially and build up the list
-        // Track objects by offset for delta resolution
+        // Track objects by both offset and SHA1 for efficient delta resolution
         var objectsByOffset = new Dictionary<long, (ObjectType Type, byte[] Data, string SHA1)>();
+        var objectsBySHA1 = new Dictionary<string, (ObjectType Type, byte[] Data)>();
         var objects = new List<PackObject>();
 
         var offset = 12; // Start after pack header
@@ -123,14 +124,18 @@ public static class PackFile
             }
         }
 
-        // Helper to calculate SHA1 of an object
+        // Helper to calculate SHA1 of an object with reduced allocations
         string CalculateObjectSHA1(ObjectType objectType, byte[] data)
         {
-            var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{objectType.ToString().ToLower()} {data.Length}\0");
-            var dataForHash = new byte[objectHeader.Length + data.Length];
-            Array.Copy(objectHeader, 0, dataForHash, 0, objectHeader.Length);
-            Array.Copy(data, 0, dataForHash, objectHeader.Length, data.Length);
-            var sha1 = System.Security.Cryptography.SHA1.HashData(dataForHash);
+            var typeString = objectType.ToString().ToLower();
+            var headerString = $"{typeString} {data.Length}\0";
+            var headerBytes = System.Text.Encoding.UTF8.GetByteCount(headerString);
+            
+            Span<byte> buffer = stackalloc byte[headerBytes + data.Length];
+            System.Text.Encoding.UTF8.GetBytes(headerString, buffer[..headerBytes]);
+            data.AsSpan().CopyTo(buffer[headerBytes..]);
+            
+            var sha1 = System.Security.Cryptography.SHA1.HashData(buffer);
             return Convert.ToHexStringLower(sha1);
         }
 
@@ -185,6 +190,7 @@ public static class PackFile
 
                 // Store for potential future delta references
                 objectsByOffset[startOffset] = (baseObj.Type, reconstructedData, sha1);
+                objectsBySHA1[sha1] = (baseObj.Type, reconstructedData);
 
                 // Create pack object
                 var packObject = new PackObject(baseObj.Type, reconstructedData.Length, reconstructedData, sha1);
@@ -199,9 +205,8 @@ public static class PackFile
                 var baseSHA1 = Convert.ToHexStringLower(baseSHA1Bytes);
                 offset += 20;
 
-                // Find base object by SHA1
-                var baseObj = objectsByOffset.Values.FirstOrDefault(o => o.SHA1 == baseSHA1);
-                if (baseObj == default)
+                // Find base object by SHA1 using O(1) lookup
+                if (!objectsBySHA1.TryGetValue(baseSHA1, out var baseObj))
                 {
                     throw new InvalidOperationException($"Base object {baseSHA1} not found for RefDelta at {startOffset}");
                 }
@@ -217,6 +222,7 @@ public static class PackFile
 
                 // Store for potential future delta references
                 objectsByOffset[startOffset] = (baseObj.Type, reconstructedData, sha1);
+                objectsBySHA1[sha1] = (baseObj.Type, reconstructedData);
 
                 // Create pack object
                 var packObject = new PackObject(baseObj.Type, reconstructedData.Length, reconstructedData, sha1);
@@ -235,6 +241,7 @@ public static class PackFile
 
                 // Store for potential future delta references
                 objectsByOffset[startOffset] = (objectType, decompressedData, sha1);
+                objectsBySHA1[sha1] = (objectType, decompressedData);
 
                 // Create pack object
                 var packObject = new PackObject(objectType, decompressedData.Length, decompressedData, sha1);
