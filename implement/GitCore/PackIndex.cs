@@ -2,7 +2,6 @@ using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
-using ICSharpCode.SharpZipLib.Zip.Compression;
 
 namespace GitCore;
 
@@ -141,7 +140,7 @@ public static class PackIndex
         var deltaObjects = new List<(long Offset, PackFile.ObjectType Type, long BaseOffset, string? BaseSHA1, byte[] DeltaData, uint CRC32)>();
 
         var offset = 12; // After header
-        var span = packDataWithoutChecksum.Span;
+        var sourceArray = packDataWithoutChecksum.Span.ToArray();
 
         // First pass: parse all objects and collect delta information
         for (var i = 0; i < objectCount; i++)
@@ -149,14 +148,14 @@ public static class PackIndex
             var startOffset = offset;
 
             // Parse object header
-            var currentByte = span[offset++];
+            var currentByte = sourceArray[offset++];
             var objectType = (PackFile.ObjectType)((currentByte >> 4) & 0x7);
             long size = currentByte & 0xF;
             var shift = 4;
 
             while ((currentByte & 0x80) is not 0)
             {
-                currentByte = span[offset++];
+                currentByte = sourceArray[offset++];
                 size |= (long)(currentByte & 0x7F) << shift;
                 shift += 7;
             }
@@ -166,24 +165,24 @@ public static class PackIndex
             {
                 // OfsDelta: Read the negative offset encoding
                 var negativeOffset = 0L;
-                currentByte = span[offset++];
+                currentByte = sourceArray[offset++];
                 negativeOffset = currentByte & 0x7F;
 
                 while ((currentByte & 0x80) is not 0)
                 {
-                    currentByte = span[offset++];
+                    currentByte = sourceArray[offset++];
                     negativeOffset = ((negativeOffset + 1) << 7) | ((long)currentByte & 0x7F);
                 }
 
                 var baseOffset = startOffset - negativeOffset;
 
                 // Now follows the compressed delta data
-                var deltaCompressedLength = FindCompressedLength(span, offset, (int)size);
-                var compressedData = span.Slice(offset, deltaCompressedLength);
+                var deltaCompressedLength = PackFile.FindCompressedLength(sourceArray, offset, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(offset, deltaCompressedLength);
                 var deltaData = PackFile.DecompressZlib(compressedData, (int)size);
 
                 var packedSize = (offset - startOffset) + deltaCompressedLength;
-                var packedData = span.Slice(startOffset, packedSize);
+                var packedData = sourceArray.AsSpan().Slice(startOffset, packedSize);
                 var crc32 = CalculateCRC32(packedData);
 
                 deltaObjects.Add((startOffset, objectType, baseOffset, null, deltaData, crc32));
@@ -192,17 +191,17 @@ public static class PackIndex
             else if (objectType is PackFile.ObjectType.RefDelta)
             {
                 // RefDelta: Read the 20-byte SHA1 reference
-                var baseSHA1Bytes = span.Slice(offset, 20);
+                var baseSHA1Bytes = sourceArray.AsSpan().Slice(offset, 20);
                 var baseSHA1 = Convert.ToHexStringLower(baseSHA1Bytes);
                 offset += 20;
 
                 // Now follows the compressed delta data
-                var refDeltaCompressedLength = FindCompressedLength(span, offset, (int)size);
-                var compressedData = span.Slice(offset, refDeltaCompressedLength);
+                var refDeltaCompressedLength = PackFile.FindCompressedLength(sourceArray, offset, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(offset, refDeltaCompressedLength);
                 var deltaData = PackFile.DecompressZlib(compressedData, (int)size);
 
                 var packedSize = (offset - startOffset) + refDeltaCompressedLength;
-                var packedData = span.Slice(startOffset, packedSize);
+                var packedData = sourceArray.AsSpan().Slice(startOffset, packedSize);
                 var crc32 = CalculateCRC32(packedData);
 
                 deltaObjects.Add((startOffset, objectType, -1, baseSHA1, deltaData, crc32));
@@ -212,15 +211,15 @@ public static class PackIndex
             {
                 // Regular object (commit, tree, blob, tag)
                 // Decompress to find the actual compressed length and calculate SHA1
-                var compressedLength = FindCompressedLength(span, offset, (int)size);
+                var compressedLength = PackFile.FindCompressedLength(sourceArray, offset, (int)size);
                 var packedSize = (offset - startOffset) + compressedLength;
 
                 // Calculate CRC32 of the complete packed object
-                var packedData = span.Slice(startOffset, packedSize);
+                var packedData = sourceArray.AsSpan().Slice(startOffset, packedSize);
                 var crc32 = CalculateCRC32(packedData);
 
                 // Decompress to calculate SHA1
-                var compressedData = span.Slice(offset, compressedLength);
+                var compressedData = sourceArray.AsSpan().Slice(offset, compressedLength);
                 var decompressed = PackFile.DecompressZlib(compressedData, (int)size);
 
                 // Calculate SHA1
@@ -275,24 +274,23 @@ public static class PackIndex
             }
 
             // Parse a regular object at this offset
-            var objSpan = packDataWithoutChecksum.Span;
             var pos = (int)objOffset;
 
-            var currentByte = objSpan[pos++];
+            var currentByte = sourceArray[pos++];
             var objType = (PackFile.ObjectType)((currentByte >> 4) & 0x7);
             long objSize = currentByte & 0xF;
             var objShift = 4;
 
             while ((currentByte & 0x80) is not 0)
             {
-                currentByte = objSpan[pos++];
+                currentByte = sourceArray[pos++];
                 objSize |= (long)(currentByte & 0x7F) << objShift;
                 objShift += 7;
             }
 
             // Decompress the regular object
-            var compLength = FindCompressedLength(objSpan, pos, (int)objSize);
-            var compData = objSpan.Slice(pos, compLength);
+            var compLength = PackFile.FindCompressedLength(sourceArray, pos, (int)objSize);
+            var compData = sourceArray.AsSpan().Slice(pos, compLength);
             var data = PackFile.DecompressZlib(compData, (int)objSize);
 
             // Cache it
@@ -476,44 +474,6 @@ public static class PackIndex
 
         return buffer;
     }
-
-    private static int FindCompressedLength(ReadOnlySpan<byte> packData, int offset, int expectedDecompressedSize)
-    {
-        // Use SharpZipLib's Inflater which tracks bytes consumed via TotalIn property
-        var inflater = new Inflater(false); // false = expect zlib header
-
-        try
-        {
-            // Provide all available data to the inflater
-            var availableData = packData[offset..].ToArray();
-            inflater.SetInput(availableData);
-
-            // Decompress to a buffer - use a slightly larger buffer to ensure the inflater
-            // reads the entire compressed stream and sets IsFinished
-            var outputBuffer = new byte[expectedDecompressedSize + 1];
-            var decompressedBytes = inflater.Inflate(outputBuffer);
-
-            if (decompressedBytes != expectedDecompressedSize)
-            {
-                throw new InvalidOperationException(
-                $"Decompression produced {decompressedBytes} bytes but expected {expectedDecompressedSize} bytes at offset {offset}");
-            }
-
-            // TotalIn tells us exactly how many bytes were consumed from the input
-            // This should now be accurate since the inflater has finished the stream
-            return (int)inflater.TotalIn;
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"Could not decompress object at offset {offset}: {ex.Message}", ex);
-        }
-        finally
-        {
-            inflater.Reset();
-        }
-    }
-
-    // Removed ByteTrackingStream class as we're using a simpler approach
 
     private static uint CalculateCRC32(ReadOnlySpan<byte> data)
     {

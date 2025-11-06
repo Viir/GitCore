@@ -190,12 +190,8 @@ public class LoadFromUrl
     private static (GitObjects.CommitObject commit, IReadOnlyDictionary<string, PackFile.PackObject> objectsBySHA1)
         ParsePackFileAndGetCommit(ReadOnlyMemory<byte> packFileData, string commitSha)
     {
-        // Generate index for the pack file
-        var indexResult = PackIndex.GeneratePackIndexV2(packFileData);
-        var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);
-
-        // Parse all objects from the pack file
-        var objects = PackFile.ParseAllObjects(packFileData, indexEntries);
+        // Parse all objects directly from the pack file (more efficient than generating index first)
+        var objects = PackFile.ParseAllObjectsDirectly(packFileData);
         var objectsBySHA1 = PackFile.GetObjectsBySHA1(objects);
 
         // Get the commit object
@@ -282,10 +278,8 @@ public class LoadFromUrl
             var blobsPackFileData =
                 await GitSmartHttp.FetchSpecificObjectsAsync(gitUrl, missingBlobShas, httpClient);
 
-            // Parse the blobs pack file
-            var blobsIndexResult = PackIndex.GeneratePackIndexV2(blobsPackFileData);
-            var blobsIndexEntries = PackIndex.ParsePackIndexV2(blobsIndexResult.IndexData);
-            var blobObjects = PackFile.ParseAllObjects(blobsPackFileData, blobsIndexEntries);
+            // Parse the blobs pack file directly without generating index
+            var blobObjects = PackFile.ParseAllObjectsDirectly(blobsPackFileData);
 
             foreach (var blobObject in blobObjects)
             {
@@ -431,10 +425,8 @@ public class LoadFromUrl
         var bloblessPackFileData =
             await GitSmartHttp.FetchBloblessPackFileAsync(gitUrl, commitSha, depth, httpClient);
 
-        // Parse the blobless pack file
-        var indexResult = PackIndex.GeneratePackIndexV2(bloblessPackFileData);
-        var indexEntries = PackIndex.ParsePackIndexV2(indexResult.IndexData);
-        var objects = PackFile.ParseAllObjects(bloblessPackFileData, indexEntries);
+        // Parse the blobless pack file directly without generating index
+        var objects = PackFile.ParseAllObjectsDirectly(bloblessPackFileData);
         var objectsBySha = PackFile.GetObjectsBySHA1(objects);
 
         return new Repository(objectsBySha.ToImmutableDictionary());

@@ -81,6 +81,162 @@ public static class PackFile
         return storedChecksum.Span.SequenceEqual(calculatedChecksum);
     }
 
+    /// <summary>
+    /// Parses all objects directly from a pack file without requiring a pre-generated index.
+    /// This is more efficient for in-memory operations where we don't need to generate an index file.
+    /// </summary>
+    /// <param name="packFileData">The bytes of the pack file including its trailing 20-byte checksum.</param>
+    /// <returns>A read-only list of parsed pack objects.</returns>
+    public static IReadOnlyList<PackObject> ParseAllObjectsDirectly(ReadOnlyMemory<byte> packFileData)
+    {
+        var header = ParsePackFileHeader(packFileData);
+        var objectCount = (int)header.ObjectCount;
+        var dataWithoutChecksum = packFileData[..^20];
+
+        /*
+         * Since Inflater.SetInput only takes arrays, we convert the span to an array once.
+         * An earlier version did convert to an array per object, but that is expensive for large pack files.
+         * */
+        var sourceArray = dataWithoutChecksum.Span.ToArray();
+
+        // We'll parse objects sequentially and build up the list
+        // Track objects by both offset and SHA1 for efficient delta resolution
+        var objectsByOffset = new Dictionary<long, (ObjectType Type, byte[] Data, string SHA1)>();
+        var objectsBySHA1 = new Dictionary<string, (ObjectType Type, byte[] Data)>();
+        var objects = new List<PackObject>();
+
+        var offset = 12; // Start after pack header
+
+        // Helper to calculate SHA1 of an object with reduced allocations
+        string CalculateObjectSHA1(ObjectType objectType, byte[] data)
+        {
+            var typeString = objectType.ToString().ToLower();
+            var headerString = $"{typeString} {data.Length}\0";
+            var headerBytes = System.Text.Encoding.UTF8.GetByteCount(headerString);
+
+            var buffer = new byte[headerBytes + data.Length];
+            System.Text.Encoding.UTF8.GetBytes(headerString, buffer.AsSpan()[..headerBytes]);
+            data.AsSpan().CopyTo(buffer.AsSpan()[headerBytes..]);
+
+            var sha1 = System.Security.Cryptography.SHA1.HashData(buffer);
+            return Convert.ToHexStringLower(sha1);
+        }
+
+        // Parse objects sequentially
+        for (var i = 0; i < objectCount; i++)
+        {
+            var startOffset = offset;
+
+            // Read object header (type and size)
+            var currentByte = sourceArray[offset++];
+            var objectType = (ObjectType)((currentByte >> 4) & 0x7);
+            long size = currentByte & 0xF;
+            var shift = 4;
+
+            while ((currentByte & 0x80) is not 0)
+            {
+                currentByte = sourceArray[offset++];
+                size |= (long)(currentByte & 0x7F) << shift;
+                shift += 7;
+            }
+
+            // Handle different object types
+            if (objectType is ObjectType.OfsDelta)
+            {
+                // Read negative offset
+                var negativeOffset = 0L;
+                currentByte = sourceArray[offset++];
+                negativeOffset = currentByte & 0x7F;
+
+                while ((currentByte & 0x80) is not 0)
+                {
+                    currentByte = sourceArray[offset++];
+                    negativeOffset = ((negativeOffset + 1) << 7) | ((long)currentByte & 0x7F);
+                }
+
+                var baseOffset = startOffset - negativeOffset;
+
+                // Get base object
+                if (!objectsByOffset.TryGetValue(baseOffset, out var baseObj))
+                {
+                    throw new InvalidOperationException($"Base object at offset {baseOffset} not found for OfsDelta at {startOffset}");
+                }
+
+                // Decompress delta data
+                var compressedLength = FindCompressedLength(sourceArray, offset, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(offset, compressedLength);
+                var deltaData = DecompressZlib(compressedData, (int)size);
+
+                // Apply delta to reconstruct object
+                var reconstructedData = ApplyDelta(baseObj.Data, deltaData);
+                var sha1 = CalculateObjectSHA1(baseObj.Type, reconstructedData);
+
+                // Store for potential future delta references
+                objectsByOffset[startOffset] = (baseObj.Type, reconstructedData, sha1);
+                objectsBySHA1[sha1] = (baseObj.Type, reconstructedData);
+
+                // Create pack object
+                var packObject = new PackObject(baseObj.Type, reconstructedData.Length, reconstructedData, sha1);
+                objects.Add(packObject);
+
+                offset += compressedLength;
+            }
+            else if (objectType is ObjectType.RefDelta)
+            {
+                // Read base SHA1
+                var baseSHA1Bytes = sourceArray.AsSpan().Slice(offset, 20);
+                var baseSHA1 = Convert.ToHexStringLower(baseSHA1Bytes);
+                offset += 20;
+
+                // Find base object by SHA1 using O(1) lookup
+                if (!objectsBySHA1.TryGetValue(baseSHA1, out var baseObj))
+                {
+                    throw new InvalidOperationException($"Base object {baseSHA1} not found for RefDelta at {startOffset}");
+                }
+
+                // Decompress delta data
+                var compressedLength = FindCompressedLength(sourceArray, offset, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(offset, compressedLength);
+                var deltaData = DecompressZlib(compressedData, (int)size);
+
+                // Apply delta to reconstruct object
+                var reconstructedData = ApplyDelta(baseObj.Data, deltaData);
+                var sha1 = CalculateObjectSHA1(baseObj.Type, reconstructedData);
+
+                // Store for potential future delta references
+                objectsByOffset[startOffset] = (baseObj.Type, reconstructedData, sha1);
+                objectsBySHA1[sha1] = (baseObj.Type, reconstructedData);
+
+                // Create pack object
+                var packObject = new PackObject(baseObj.Type, reconstructedData.Length, reconstructedData, sha1);
+                objects.Add(packObject);
+
+                offset += compressedLength;
+            }
+            else
+            {
+                // Regular object (commit, tree, blob, tag)
+                var compressedLength = FindCompressedLength(sourceArray, offset, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(offset, compressedLength);
+                var decompressedData = DecompressZlib(compressedData, (int)size);
+
+                var sha1 = CalculateObjectSHA1(objectType, decompressedData);
+
+                // Store for potential future delta references
+                objectsByOffset[startOffset] = (objectType, decompressedData, sha1);
+                objectsBySHA1[sha1] = (objectType, decompressedData);
+
+                // Create pack object
+                var packObject = new PackObject(objectType, decompressedData.Length, decompressedData, sha1);
+                objects.Add(packObject);
+
+                offset += compressedLength;
+            }
+        }
+
+        return objects;
+    }
+
     public static IReadOnlyList<PackObject> ParseAllObjects(
         ReadOnlyMemory<byte> packFileData,
         IReadOnlyList<PackIndex.IndexEntry> indexEntries)
@@ -106,35 +262,35 @@ public static class PackFile
                 return cached;
             }
 
-            var span = dataWithoutChecksum.Span;
+            var sourceArray = dataWithoutChecksum.Span.ToArray();
             var pos = objOffset;
             var startPos = pos;
 
             // Read object type and size from variable-length encoding
-            var currentByte = span[pos++];
+            var currentByte = sourceArray[pos++];
             var objectType = (ObjectType)((currentByte >> 4) & 0x7);
             long size = currentByte & 0xF;
             var shift = 4;
 
             // Continue reading size if MSB is set
-            while ((currentByte & 0x80) != 0)
+            while ((currentByte & 0x80) is not 0)
             {
-                currentByte = span[pos++];
+                currentByte = sourceArray[pos++];
                 size |= (long)(currentByte & 0x7F) << shift;
                 shift += 7;
             }
 
             // Handle delta objects
-            if (objectType == ObjectType.OfsDelta)
+            if (objectType is ObjectType.OfsDelta)
             {
                 // Read negative offset
                 var negativeOffset = 0L;
-                currentByte = span[pos++];
+                currentByte = sourceArray[pos++];
                 negativeOffset = currentByte & 0x7F;
 
-                while ((currentByte & 0x80) != 0)
+                while ((currentByte & 0x80) is not 0)
                 {
-                    currentByte = span[pos++];
+                    currentByte = sourceArray[pos++];
                     negativeOffset = ((negativeOffset + 1) << 7) | ((long)currentByte & 0x7F);
                 }
 
@@ -145,8 +301,8 @@ public static class PackFile
 
                 // Decompress delta data
                 // Find compressed length by trying to decompress
-                var compressedLength = FindCompressedLengthForRegular(span, pos, (int)size);
-                var compressedData = span.Slice(pos, compressedLength);
+                var compressedLength = FindCompressedLength(sourceArray, pos, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(pos, compressedLength);
                 var deltaData = DecompressZlib(compressedData, (int)size);
 
                 // Apply delta
@@ -157,10 +313,10 @@ public static class PackFile
                 objectsByOffset[objOffset] = result;
                 return result;
             }
-            else if (objectType == ObjectType.RefDelta)
+            else if (objectType is ObjectType.RefDelta)
             {
                 // Read base SHA1
-                var baseSHA1Bytes = span.Slice(pos, 20);
+                var baseSHA1Bytes = sourceArray.AsSpan().Slice(pos, 20);
                 var baseSHA1 = Convert.ToHexStringLower(baseSHA1Bytes);
                 pos += 20;
 
@@ -176,8 +332,8 @@ public static class PackFile
                 }
 
                 // Decompress delta data
-                var compressedLength = FindCompressedLengthForRegular(span, pos, (int)size);
-                var compressedData = span.Slice(pos, compressedLength);
+                var compressedLength = FindCompressedLength(sourceArray, pos, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(pos, compressedLength);
                 var deltaData = DecompressZlib(compressedData, (int)size);
 
                 // Apply delta
@@ -192,35 +348,13 @@ public static class PackFile
             {
                 // Regular object
                 // Find compressed length
-                var compressedLength = FindCompressedLengthForRegular(span, pos, (int)size);
-                var compressedData = span.Slice(pos, compressedLength);
+                var compressedLength = FindCompressedLength(sourceArray, pos, (int)size);
+                var compressedData = sourceArray.AsSpan().Slice(pos, compressedLength);
                 var decompressedData = DecompressZlib(compressedData, (int)size);
 
                 var result = (objectType, decompressedData);
                 objectsByOffset[objOffset] = result;
                 return result;
-            }
-        }
-
-        // Helper to find compressed length for regular objects
-        int FindCompressedLengthForRegular(ReadOnlySpan<byte> data, int offset, int expectedSize)
-        {
-            var inflater = new ICSharpCode.SharpZipLib.Zip.Compression.Inflater(false);
-            try
-            {
-                var availableData = data[offset..].ToArray();
-                inflater.SetInput(availableData);
-                var outputBuffer = new byte[expectedSize + 1];
-                var decompressedBytes = inflater.Inflate(outputBuffer);
-                if (decompressedBytes != expectedSize)
-                {
-                    throw new InvalidOperationException($"Decompression size mismatch at offset {offset}");
-                }
-                return (int)inflater.TotalIn;
-            }
-            finally
-            {
-                inflater.Reset();
             }
         }
 
@@ -255,6 +389,46 @@ public static class PackFile
         }
 
         return objects;
+    }
+
+    internal static int FindCompressedLength(byte[] data, int startOffset, int expectedDecompressedSize)
+    {
+        // Use SharpZipLib's Inflater which tracks bytes consumed via TotalIn property
+
+        var inflater =
+            new ICSharpCode.SharpZipLib.Zip.Compression.Inflater(
+                noHeader: false); // false = expect zlib header
+
+        try
+        {
+            // Provide all available data to the inflater
+            inflater.SetInput(data, index: startOffset, count: data.Length - startOffset);
+
+            // Decompress to a buffer - use a slightly larger buffer to ensure the inflater
+            // reads the entire compressed stream and sets IsFinished
+            var outputBuffer = new byte[expectedDecompressedSize + 1];
+
+            var decompressedBytes = inflater.Inflate(outputBuffer);
+
+            if (decompressedBytes != expectedDecompressedSize)
+            {
+                throw new InvalidOperationException(
+                    $"Decompression produced {decompressedBytes} bytes but expected " +
+                    $"{expectedDecompressedSize} bytes at offset {startOffset}");
+            }
+
+            // TotalIn tells us exactly how many bytes were consumed from the input
+            // This should now be accurate since the inflater has finished the stream
+            return (int)inflater.TotalIn;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Could not decompress object at offset {startOffset}: {ex.Message}", ex);
+        }
+        finally
+        {
+            inflater.Reset();
+        }
     }
 
     public static byte[] DecompressZlib(ReadOnlySpan<byte> compressedData, int expectedSize)
