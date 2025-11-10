@@ -24,13 +24,14 @@ public static class GitSmartHttp
         string BaseUrl,
         string Owner,
         string Repo,
-        string CommitShaOrBranch);
+        string CommitShaOrBranch,
+        IReadOnlyList<string>? SubdirectoryPath);
 
     /// <summary>
     /// Parses a GitHub or GitLab tree URL to extract repository information and commit SHA or branch.
     /// </summary>
-    /// <param name="url">URL like https://github.com/owner/repo/tree/commit-sha or https://github.com/owner/repo/tree/main</param>
-    /// <returns>Record containing baseUrl, owner, repo, and commitShaOrBranch</returns>
+    /// <param name="url">URL like https://github.com/owner/repo/tree/commit-sha or https://github.com/owner/repo/tree/main/subdirectory</param>
+    /// <returns>Record containing baseUrl, owner, repo, commitShaOrBranch, and optional subdirectory path</returns>
     public static ParseTreeUrlResult ParseTreeUrl(string url)
     {
         var uri = new Uri(url);
@@ -40,22 +41,28 @@ public static class GitSmartHttp
 
         if (host is "github.com" && pathParts.Length >= 4 && pathParts[2] is "tree")
         {
-            // Format: github.com/owner/repo/tree/commit-sha-or-branch
+            // Format: github.com/owner/repo/tree/commit-sha-or-branch[/subdirectory/path]
+            var subdirectoryPath = pathParts.Length > 4 ? pathParts[4..] : null;
+            
             return new ParseTreeUrlResult(
-                $"{scheme}://{host}",
-                pathParts[0],
-                pathParts[1],
-                pathParts[3]
+                BaseUrl: $"{scheme}://{host}",
+                Owner: pathParts[0],
+                Repo: pathParts[1],
+                CommitShaOrBranch: pathParts[3],
+                SubdirectoryPath: subdirectoryPath
             );
         }
         else if (host is "gitlab.com" && pathParts.Length >= 5 && pathParts[2] is "-" && pathParts[3] is "tree")
         {
-            // Format: gitlab.com/owner/repo/-/tree/commit-sha-or-branch
+            // Format: gitlab.com/owner/repo/-/tree/commit-sha-or-branch[/subdirectory/path]
+            var subdirectoryPath = pathParts.Length > 5 ? pathParts[5..] : null;
+            
             return new ParseTreeUrlResult(
-                $"{scheme}://{host}",
-                pathParts[0],
-                pathParts[1],
-                pathParts[4]
+                BaseUrl: $"{scheme}://{host}",
+                Owner: pathParts[0],
+                Repo: pathParts[1],
+                CommitShaOrBranch: pathParts[4],
+                SubdirectoryPath: subdirectoryPath
             );
         }
         else

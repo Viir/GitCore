@@ -61,6 +61,63 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
+    public async Task Load_subdirectory_tree_from_url_with_branch()
+    {
+        // Test loading a subdirectory using a URL with branch name
+        var url = "https://github.com/Viir/GitCore/tree/main/implement/GitCore";
+
+        // Load the subdirectory contents
+        var subdirectoryContents = await LoadFromUrl.LoadTreeContentsFromUrlAsync(url);
+
+        // Verify that the subdirectory was loaded successfully
+        subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
+        subdirectoryContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
+
+        // Verify specific files exist in the subdirectory
+        subdirectoryContents.Keys.Should().Contain(key => key.SequenceEqual(new[] { "GitObjects.cs" }),
+            "Should contain GitObjects.cs");
+
+        subdirectoryContents.Keys.Should().Contain(key => key.SequenceEqual(new[] { "LoadFromUrl.cs" }),
+            "Should contain LoadFromUrl.cs");
+
+        // Verify there's a file in the Common subdirectory
+        var hasCommonSubdir = subdirectoryContents.Keys
+            .Any(path => path.Count >= 2 && path[0] == "Common" && path[1] == "EnumerableExtensions.cs");
+
+        hasCommonSubdir.Should().BeTrue("Should contain files in the Common subdirectory");
+
+        // Verify we have the expected number of entries for this subdirectory
+        // The implement/GitCore directory has about 9 files (including Common/EnumerableExtensions.cs)
+        subdirectoryContents.Count.Should().Be(9, "Subdirectory should contain exactly 9 files");
+    }
+
+    [Fact]
+    public async Task Load_subdirectory_tree_from_url_with_commit_sha()
+    {
+        // Test loading a subdirectory using a URL with commit SHA
+        var url = "https://github.com/Viir/GitCore/tree/95e147221ccae4d8609f02f132fc57f87adc135a/implement/GitCore";
+
+        // Load the subdirectory contents
+        var subdirectoryContents = await LoadFromUrl.LoadTreeContentsFromUrlAsync(url);
+
+        // Verify that the subdirectory was loaded successfully
+        subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
+        subdirectoryContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
+
+        // Verify specific files exist in the subdirectory
+        subdirectoryContents.Keys.Should().Contain(key => key.SequenceEqual(new[] { "GitObjects.cs" }),
+            "Should contain GitObjects.cs");
+
+        subdirectoryContents.Keys.Should().Contain(key => key.SequenceEqual(new[] { "LoadFromUrl.cs" }),
+            "Should contain LoadFromUrl.cs");
+
+        // Verify we have the expected number of entries for this subdirectory
+        // At this specific commit, the directory may have a different count
+        subdirectoryContents.Count.Should().BeLessThan(15, "Subdirectory should not contain entire repository");
+        subdirectoryContents.Count.Should().BeGreaterThan(3, "Subdirectory should contain multiple files");
+    }
+
+    [Fact]
     public async Task Load_tree_with_custom_http_client_for_profiling()
     {
         // Create a custom HttpClient with a delegating handler to track requests

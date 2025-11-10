@@ -46,6 +46,18 @@ public class LoadFromUrl
                 httpClient);
         }
 
+        // Check if a subdirectory is specified
+        if (parsed.SubdirectoryPath is not null && parsed.SubdirectoryPath.Count > 0)
+        {
+            // Load only the subdirectory contents
+            var gitUrl = $"{parsed.BaseUrl}/{parsed.Owner}/{parsed.Repo}.git";
+            return await LoadSubdirectoryContentsFromGitUrlAsync(
+                gitUrl,
+                commitSha,
+                parsed.SubdirectoryPath,
+                httpClient);
+        }
+
         // Fetch the pack file containing the commit and its tree
         var packFileData =
             await GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha, httpClient);
