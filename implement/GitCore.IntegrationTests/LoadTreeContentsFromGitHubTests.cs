@@ -74,11 +74,9 @@ public class LoadFromGitHubTests
         subdirectoryContents.Count.Should().Be(9, "Subdirectory should contain 9 files");
 
         // Verify specific files exist in the subdirectory
-        subdirectoryContents.Keys.Should().Contain(key => key.SequenceEqual(new[] { "GitObjects.cs" }),
-            "Should contain GitObjects.cs");
+        subdirectoryContents.Should().ContainKey(["GitObjects.cs"]);
 
-        subdirectoryContents.Keys.Should().Contain(key => key.SequenceEqual(new[] { "LoadFromUrl.cs" }),
-            "Should contain LoadFromUrl.cs");
+        subdirectoryContents.Should().ContainKey(["LoadFromUrl.cs"]);
     }
 
     [Fact]
