@@ -61,6 +61,25 @@ public class LoadFromGitHubTests
     }
 
     [Fact]
+    public async Task Load_subdirectory_tree_from_url_with_commit_sha()
+    {
+        // Test loading a subdirectory using a URL with commit SHA
+        var url = "https://github.com/Viir/GitCore/tree/95e147221ccae4d8609f02f132fc57f87adc135a/implement/GitCore";
+
+        // Load the subdirectory contents
+        var subdirectoryContents = await LoadFromUrl.LoadTreeContentsFromUrlAsync(url);
+
+        // Verify that the subdirectory was loaded successfully
+        subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
+        subdirectoryContents.Count.Should().Be(9, "Subdirectory should contain 9 files");
+
+        // Verify specific files exist in the subdirectory
+        subdirectoryContents.Should().ContainKey(["GitObjects.cs"]);
+
+        subdirectoryContents.Should().ContainKey(["LoadFromUrl.cs"]);
+    }
+
+    [Fact]
     public async Task Load_tree_with_custom_http_client_for_profiling()
     {
         // Create a custom HttpClient with a delegating handler to track requests

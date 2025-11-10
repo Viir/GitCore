@@ -46,11 +46,14 @@ public class LoadFromUrl
                 httpClient);
         }
 
-        // Fetch the pack file containing the commit and its tree
-        var packFileData =
-            await GitSmartHttp.FetchPackFileAsync(parsed.BaseUrl, parsed.Owner, parsed.Repo, commitSha, httpClient);
+        // Load only the subdirectory contents
+        var gitUrl = $"{parsed.BaseUrl}/{parsed.Owner}/{parsed.Repo}.git";
 
-        return LoadTreeContentsFromPackFile(packFileData, commitSha);
+        return await LoadSubdirectoryContentsFromGitUrlAsync(
+            gitUrl,
+            commitSha,
+            parsed.SubdirectoryPath ?? [],
+            httpClient);
     }
 
     /// <summary>
@@ -113,8 +116,13 @@ public class LoadFromUrl
         Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache = null,
         Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob = null)
     {
-        return await LoadSubdirectoryContentsWithBloblessCloneAsync(
-            gitUrl, commitSha, subdirectoryPath, httpClient, getBlobFromCache, reportLoadedBlob);
+        return await LoadSubdirectoryContentsViaBloblessCloneAsync(
+            gitUrl: gitUrl,
+            commitSha: commitSha,
+            subdirectoryPath: subdirectoryPath,
+            httpClient,
+            getBlobFromCache: getBlobFromCache,
+            reportLoadedBlob: reportLoadedBlob);
     }
 
     /// <summary>
@@ -215,7 +223,7 @@ public class LoadFromUrl
     /// Loads subdirectory contents using blobless clone optimization.
     /// First fetches only trees and commit, then requests specific blobs for the subdirectory.
     /// </summary>
-    private static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadSubdirectoryContentsWithBloblessCloneAsync(
+    private static async Task<IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>>> LoadSubdirectoryContentsViaBloblessCloneAsync(
         string gitUrl,
         string commitSha,
         FilePath subdirectoryPath,
