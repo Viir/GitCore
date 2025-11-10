@@ -43,7 +43,7 @@ public static class GitSmartHttp
         {
             // Format: github.com/owner/repo/tree/commit-sha-or-branch[/subdirectory/path]
             var subdirectoryPath = pathParts.Length > 4 ? pathParts[4..] : null;
-            
+
             return new ParseTreeUrlResult(
                 BaseUrl: $"{scheme}://{host}",
                 Owner: pathParts[0],
@@ -56,7 +56,7 @@ public static class GitSmartHttp
         {
             // Format: gitlab.com/owner/repo/-/tree/commit-sha-or-branch[/subdirectory/path]
             var subdirectoryPath = pathParts.Length > 5 ? pathParts[5..] : null;
-            
+
             return new ParseTreeUrlResult(
                 BaseUrl: $"{scheme}://{host}",
                 Owner: pathParts[0],
