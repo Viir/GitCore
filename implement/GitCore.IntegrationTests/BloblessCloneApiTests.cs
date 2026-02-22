@@ -197,6 +197,7 @@ public class BloblessCloneApiTests
 
         // Act & Assert - try to navigate through README.md as if it were a directory
         System.InvalidOperationException? exception = null;
+
         try
         {
             LoadFromUrl.NavigateToSubtree(
@@ -412,10 +413,20 @@ public class BloblessCloneApiTests
             // For the first commit, verify specific expected values
             if (i is 0)
             {
-                currentSha.Should().Be("377a8477cff1f2c40108634b524dcf80a3e41db1", "First commit should be the start commit");
+                currentSha.Should().Be(
+                    "377a8477cff1f2c40108634b524dcf80a3e41db1",
+                    "First commit should be the start commit");
+
                 commit.ParentHashes.Count.Should().Be(1, "First commit should have 1 parent");
-                commit.ParentHashes[0].Should().Be("e912ee56e0686099a82aeb05796e46e5e0ba40e9", "First parent should match expected SHA");
-                commit.Message.Should().StartWith("Refactor API based on feedback", "Message should match expected text");
+
+                commit.ParentHashes[0].Should().Be(
+                    "e912ee56e0686099a82aeb05796e46e5e0ba40e9",
+                    "First parent should match expected SHA");
+
+                commit.Message.Should().StartWith(
+                    "Refactor API based on feedback",
+                    "Message should match expected text");
+
                 commit.Author.Name.Should().Contain("copilot", "Author name should contain 'copilot'");
                 commit.Author.Email.Should().Contain("Copilot@users.noreply.github.com", "Author email should match");
             }
@@ -423,7 +434,9 @@ public class BloblessCloneApiTests
             // Navigate to first parent for next iteration
             if (i < 3) // Only navigate if we haven't reached the 4th commit yet
             {
-                commit.ParentHashes.Should().NotBeEmpty($"Commit {i} should have at least one parent to continue navigation");
+                commit.ParentHashes.Should().NotBeEmpty(
+                    $"Commit {i} should have at least one parent to continue navigation");
+
                 currentSha = commit.ParentHashes[0]; // Follow first parent
             }
         }

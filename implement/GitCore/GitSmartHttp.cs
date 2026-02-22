@@ -44,26 +44,26 @@ public static class GitSmartHttp
             // Format: github.com/owner/repo/tree/commit-sha-or-branch[/subdirectory/path]
             var subdirectoryPath = pathParts.Length > 4 ? pathParts[4..] : null;
 
-            return new ParseTreeUrlResult(
-                BaseUrl: $"{scheme}://{host}",
-                Owner: pathParts[0],
-                Repo: pathParts[1],
-                CommitShaOrBranch: pathParts[3],
-                SubdirectoryPath: subdirectoryPath
-            );
+            return
+                new ParseTreeUrlResult(
+                    BaseUrl: $"{scheme}://{host}",
+                    Owner: pathParts[0],
+                    Repo: pathParts[1],
+                    CommitShaOrBranch: pathParts[3],
+                    SubdirectoryPath: subdirectoryPath);
         }
         else if (host is "gitlab.com" && pathParts.Length >= 5 && pathParts[2] is "-" && pathParts[3] is "tree")
         {
             // Format: gitlab.com/owner/repo/-/tree/commit-sha-or-branch[/subdirectory/path]
             var subdirectoryPath = pathParts.Length > 5 ? pathParts[5..] : null;
 
-            return new ParseTreeUrlResult(
-                BaseUrl: $"{scheme}://{host}",
-                Owner: pathParts[0],
-                Repo: pathParts[1],
-                CommitShaOrBranch: pathParts[4],
-                SubdirectoryPath: subdirectoryPath
-            );
+            return
+                new ParseTreeUrlResult(
+                    BaseUrl: $"{scheme}://{host}",
+                    Owner: pathParts[0],
+                    Repo: pathParts[1],
+                    CommitShaOrBranch: pathParts[4],
+                    SubdirectoryPath: subdirectoryPath);
         }
         else
         {
@@ -238,10 +238,11 @@ public static class GitSmartHttp
         int? shallowDepth = (subdirectoryPath is not null && subdirectoryPath.Count > 0) ? 1 : null;
         var requestBody = BuildUploadPackRequest(commitSha, shallowDepth);
 
-        using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
-        {
-            Content = new ByteArrayContent(requestBody)
-        };
+        using var packRequest =
+            new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
+            {
+                Content = new ByteArrayContent(requestBody)
+            };
 
         packRequest.Content.Headers.ContentType =
             new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");
@@ -371,10 +372,11 @@ public static class GitSmartHttp
         // Step 2: Request pack file
         var uploadPackUrl = $"{gitUrl}/git-upload-pack";
 
-        using var packRequest = new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
-        {
-            Content = new ByteArrayContent(requestBody)
-        };
+        using var packRequest =
+            new HttpRequestMessage(HttpMethod.Post, uploadPackUrl)
+            {
+                Content = new ByteArrayContent(requestBody)
+            };
 
         packRequest.Content.Headers.ContentType =
             new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-git-upload-pack-request");

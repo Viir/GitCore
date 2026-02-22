@@ -32,5 +32,4 @@ namespace GitCore.IntegrationTests
             headTarget.Should().Be("refs/heads/main", "Remote HEAD should point to the main branch");
         }
     }
-
 }

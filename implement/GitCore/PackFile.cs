@@ -328,6 +328,7 @@ public static class PackFile
                     {
                         throw new InvalidOperationException($"Base object {baseSHA1} not found for RefDelta");
                     }
+
                     baseObj = ParseObjectAt((int)baseEntry.Offset);
                 }
 
@@ -373,7 +374,9 @@ public static class PackFile
             var packObject = new PackObject(objectType, decompressedData.Length, decompressedData, entry.SHA1base16);
 
             // Verify SHA1 matches
-            var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{objectType.ToString().ToLower()} {decompressedData.Length}\0");
+            var objectHeader =
+                System.Text.Encoding.UTF8.GetBytes($"{objectType.ToString().ToLower()} {decompressedData.Length}\0");
+
             var dataForHash = new byte[objectHeader.Length + decompressedData.Length];
             Array.Copy(objectHeader, 0, dataForHash, 0, objectHeader.Length);
             Array.Copy(decompressedData, 0, dataForHash, objectHeader.Length, decompressedData.Length);
@@ -476,31 +479,44 @@ public static class PackFile
         {
             var cmd = deltaData[offset++];
 
-            if ((cmd & 0x80) != 0)
+            if ((cmd & 0x80) is not 0)
             {
                 // Copy command
                 var copyOffset = 0;
                 var copySize = 0;
 
                 // Read offset (up to 4 bytes)
-                if ((cmd & 0x01) != 0) copyOffset = deltaData[offset++];
-                if ((cmd & 0x02) != 0) copyOffset |= deltaData[offset++] << 8;
-                if ((cmd & 0x04) != 0) copyOffset |= deltaData[offset++] << 16;
-                if ((cmd & 0x08) != 0) copyOffset |= deltaData[offset++] << 24;
+                if ((cmd & 0x01) is not 0)
+                    copyOffset = deltaData[offset++];
+
+                if ((cmd & 0x02) is not 0)
+                    copyOffset |= deltaData[offset++] << 8;
+
+                if ((cmd & 0x04) is not 0)
+                    copyOffset |= deltaData[offset++] << 16;
+
+                if ((cmd & 0x08) is not 0)
+                    copyOffset |= deltaData[offset++] << 24;
 
                 // Read size (up to 3 bytes)
-                if ((cmd & 0x10) != 0) copySize = deltaData[offset++];
-                if ((cmd & 0x20) != 0) copySize |= deltaData[offset++] << 8;
-                if ((cmd & 0x40) != 0) copySize |= deltaData[offset++] << 16;
+                if ((cmd & 0x10) is not 0)
+                    copySize = deltaData[offset++];
+
+                if ((cmd & 0x20) is not 0)
+                    copySize |= deltaData[offset++] << 8;
+
+                if ((cmd & 0x40) is not 0)
+                    copySize |= deltaData[offset++] << 16;
 
                 // Size 0 means 0x10000
-                if (copySize == 0) copySize = 0x10000;
+                if (copySize is 0)
+                    copySize = 0x10000;
 
                 // Copy from base
                 baseData.Slice(copyOffset, copySize).CopyTo(result.AsSpan(resultOffset, copySize));
                 resultOffset += copySize;
             }
-            else if (cmd != 0)
+            else if (cmd is not 0)
             {
                 // Insert command - cmd bytes follow
                 var insertSize = cmd;
@@ -533,7 +549,8 @@ public static class PackFile
             b = data[offset++];
             size |= (b & 0x7F) << shift;
             shift += 7;
-        } while ((b & 0x80) != 0);
+        }
+        while ((b & 0x80) is not 0);
 
         return size;
     }

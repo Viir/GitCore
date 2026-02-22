@@ -39,21 +39,22 @@ public class LoadFromUrl
             // It's a branch name, resolve it to a commit SHA
             commitSha =
                 await GitSmartHttp.FetchBranchCommitShaAsync(
-                parsed.BaseUrl,
-                parsed.Owner,
-                parsed.Repo,
-                parsed.CommitShaOrBranch,
-                httpClient);
+                    parsed.BaseUrl,
+                    parsed.Owner,
+                    parsed.Repo,
+                    parsed.CommitShaOrBranch,
+                    httpClient);
         }
 
         // Load only the subdirectory contents
         var gitUrl = $"{parsed.BaseUrl}/{parsed.Owner}/{parsed.Repo}.git";
 
-        return await LoadSubdirectoryContentsFromGitUrlAsync(
-            gitUrl,
-            commitSha,
-            parsed.SubdirectoryPath ?? [],
-            httpClient);
+        return
+            await LoadSubdirectoryContentsFromGitUrlAsync(
+                gitUrl,
+                commitSha,
+                parsed.SubdirectoryPath ?? [],
+                httpClient);
     }
 
     /// <summary>
@@ -116,13 +117,14 @@ public class LoadFromUrl
         Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache = null,
         Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob = null)
     {
-        return await LoadSubdirectoryContentsViaBloblessCloneAsync(
-            gitUrl: gitUrl,
-            commitSha: commitSha,
-            subdirectoryPath: subdirectoryPath,
-            httpClient,
-            getBlobFromCache: getBlobFromCache,
-            reportLoadedBlob: reportLoadedBlob);
+        return
+            await LoadSubdirectoryContentsViaBloblessCloneAsync(
+                gitUrl: gitUrl,
+                commitSha: commitSha,
+                subdirectoryPath: subdirectoryPath,
+                httpClient,
+                getBlobFromCache: getBlobFromCache,
+                reportLoadedBlob: reportLoadedBlob);
     }
 
     /// <summary>
@@ -143,13 +145,14 @@ public class LoadFromUrl
         Func<string, ReadOnlyMemory<byte>?>? getBlobFromCache = null,
         Action<string, ReadOnlyMemory<byte>>? reportLoadedBlob = null)
     {
-        return LoadSubdirectoryContentsFromGitUrlAsync(
-            gitUrl,
-            commitSha,
-            subdirectoryPath,
-            httpClient,
-            getBlobFromCache,
-            reportLoadedBlob)
+        return
+            LoadSubdirectoryContentsFromGitUrlAsync(
+                gitUrl,
+                commitSha,
+                subdirectoryPath,
+                httpClient,
+                getBlobFromCache,
+                reportLoadedBlob)
             .GetAwaiter().GetResult();
     }
 
@@ -166,9 +169,10 @@ public class LoadFromUrl
         var (commit, objectsBySHA1) = ParsePackFileAndGetCommit(packFileData, commitSha);
 
         // Get all files from the tree recursively
-        return GitObjects.GetAllFilesFromTree(
-            commit.TreeHash,
-            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+        return
+            GitObjects.GetAllFilesFromTree(
+                commit.TreeHash,
+                sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
 
     /// <summary>
@@ -186,10 +190,11 @@ public class LoadFromUrl
         var (commit, objectsBySHA1) = ParsePackFileAndGetCommit(packFileData, commitSha);
 
         // Get files from the subdirectory
-        return GitObjects.GetFilesFromSubdirectory(
-            commit.TreeHash,
-            subdirectoryPath,
-            sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
+        return
+            GitObjects.GetFilesFromSubdirectory(
+                commit.TreeHash,
+                subdirectoryPath,
+                sha => objectsBySHA1.TryGetValue(sha, out var obj) ? obj : null);
     }
 
     /// <summary>
@@ -302,21 +307,23 @@ public class LoadFromUrl
         }
 
         // Step 5: Merge repository with the fetched blobs
-        var blobPackObjects = cachedBlobs.ToDictionary(
-            kvp => kvp.Key,
-            kvp => new PackFile.PackObject(
-                PackFile.ObjectType.Blob,
-                kvp.Value.Length,
-                kvp.Value,
-                kvp.Key));
+        var blobPackObjects =
+            cachedBlobs.ToDictionary(
+                kvp => kvp.Key,
+                kvp => new PackFile.PackObject(
+                    PackFile.ObjectType.Blob,
+                    kvp.Value.Length,
+                    kvp.Value,
+                    kvp.Key));
 
         var mergedRepository = repository.WithObjects(blobPackObjects.ToImmutableDictionary());
 
         // Step 6: Get files from the subdirectory (now we have all the blobs)
-        return GitObjects.GetFilesFromSubdirectory(
-            commit.TreeHash,
-            subdirectoryPath,
-            sha => mergedRepository.GetObject(sha));
+        return
+            GitObjects.GetFilesFromSubdirectory(
+                commit.TreeHash,
+                subdirectoryPath,
+                sha => mergedRepository.GetObject(sha));
     }
 
     /// <summary>

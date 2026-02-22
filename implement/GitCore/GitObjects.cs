@@ -92,12 +92,13 @@ public static partial class GitObjects
         var author = ParseSignature(authorLine);
         var committer = ParseSignature(committerLine);
 
-        return new CommitObject(
-            treeHash,
-            parentHashes,
-            author,
-            committer,
-            message);
+        return
+            new CommitObject(
+                treeHash,
+                parentHashes,
+                author,
+                committer,
+                message);
     }
 
     /// <summary>
@@ -231,12 +232,14 @@ public static partial class GitObjects
         Func<string, PackFile.PackObject?> getObjectByHashBase16,
         IReadOnlyList<string>? pathPrefix = null)
     {
-        var files = new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
-            comparer: Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
+        var files =
+            new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
+                comparer: Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
 
         pathPrefix ??= [];
 
         var treeObject = getObjectByHashBase16(treeHashBase16);
+
         if (treeObject is null)
         {
             throw new InvalidOperationException($"Tree {treeHashBase16} not found in pack file");
@@ -256,6 +259,7 @@ public static partial class GitObjects
             if (entry.Mode.StartsWith("100")) // Regular file
             {
                 var blobObject = getObjectByHashBase16(entry.HashBase16);
+
                 if (blobObject is not null && blobObject.Type is PackFile.ObjectType.Blob)
                 {
                     files[filePath] = GetBlobContent(blobObject.Data);
@@ -265,6 +269,7 @@ public static partial class GitObjects
             {
                 // Recursively process subdirectories
                 var subFiles = GetAllFilesFromTree(entry.HashBase16, getObjectByHashBase16, filePath);
+
                 foreach (var (subPath, content) in subFiles)
                 {
                     files[subPath] = content;
@@ -293,6 +298,7 @@ public static partial class GitObjects
         foreach (var pathComponent in subdirectoryPath)
         {
             var treeObject = getObjectByHashBase16(currentTreeHash);
+
             if (treeObject is null)
             {
                 throw new InvalidOperationException($"Tree {currentTreeHash} not found");

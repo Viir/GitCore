@@ -35,7 +35,8 @@ public class LoadFromGitHubTests
         readmeFile.Length.Should().BeGreaterThan(0, "README.md should exist and have content");
 
         // Assert that there's at least one file in the "implement" subdirectory
-        var hasImplementSubdir = treeContents.Keys
+        var hasImplementSubdir =
+            treeContents.Keys
             .Any(path => path.Count >= 2 && path[0] is "implement");
 
         hasImplementSubdir.Should().BeTrue("There should be files in the 'implement' subdirectory");
@@ -111,7 +112,9 @@ public class LoadFromGitHubTests
         // Load the subdirectory contents
         var subdirectoryContents =
             await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
-                repositoryUrl, commitSha, subdirectoryPath);
+                repositoryUrl,
+                commitSha,
+                subdirectoryPath);
 
         // Verify that the subdirectory was loaded successfully
         subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
@@ -127,7 +130,8 @@ public class LoadFromGitHubTests
         var gitObjectsSHA256 = System.Security.Cryptography.SHA256.HashData(gitObjectsFile.Span);
         var gitObjectsSHA256Hex = System.Convert.ToHexStringLower(gitObjectsSHA256);
 
-        gitObjectsSHA256Hex.Should().Be("36f2b12feedab28573517f04f8a6e79349c35dd912d4e308979c5a01325d67d3",
+        gitObjectsSHA256Hex.Should().Be(
+            "36f2b12feedab28573517f04f8a6e79349c35dd912d4e308979c5a01325d67d3",
             "GitObjects.cs should have the expected content");
 
         // Check README.md in subdirectory
@@ -138,7 +142,8 @@ public class LoadFromGitHubTests
         var readmeSHA256 = System.Security.Cryptography.SHA256.HashData(readmeFile.Span);
         var readmeSHA256Hex = System.Convert.ToHexStringLower(readmeSHA256);
 
-        readmeSHA256Hex.Should().Be("df5b3681431113fac02803118d1f7298f65340716041b0fa9255de3d7d650ab7",
+        readmeSHA256Hex.Should().Be(
+            "df5b3681431113fac02803118d1f7298f65340716041b0fa9255de3d7d650ab7",
             "README.md should have the expected content");
 
         // Check LoadFromUrl.cs
@@ -149,7 +154,8 @@ public class LoadFromGitHubTests
         var loadFromUrlSHA256 = System.Security.Cryptography.SHA256.HashData(loadFromUrlFile.Span);
         var loadFromUrlSHA256Hex = System.Convert.ToHexStringLower(loadFromUrlSHA256);
 
-        loadFromUrlSHA256Hex.Should().Be("b99815cf9e36ed9ef8f42f653e0ca370f05d5c1c2ac0733887318ac65b344e41",
+        loadFromUrlSHA256Hex.Should().Be(
+            "b99815cf9e36ed9ef8f42f653e0ca370f05d5c1c2ac0733887318ac65b344e41",
             "LoadFromUrl.cs should have the expected content");
 
         // Check a file in the Common subdirectory
@@ -160,7 +166,8 @@ public class LoadFromGitHubTests
         var enumerableExtSHA256 = System.Security.Cryptography.SHA256.HashData(enumerableExtFile.Span);
         var enumerableExtSHA256Hex = System.Convert.ToHexStringLower(enumerableExtSHA256);
 
-        enumerableExtSHA256Hex.Should().Be("562069c4dc418f9e56c09be5f23894b50099747b9a044c073c0a41141846725d",
+        enumerableExtSHA256Hex.Should().Be(
+            "562069c4dc418f9e56c09be5f23894b50099747b9a044c073c0a41141846725d",
             "Common/EnumerableExtensions.cs should have the expected content");
     }
 
@@ -179,7 +186,10 @@ public class LoadFromGitHubTests
         // Load the subdirectory contents
         var subdirectoryContents =
             await LoadFromUrl.LoadSubdirectoryContentsFromGitUrlAsync(
-                repositoryUrl, commitSha, subdirectoryPath, httpClient);
+                repositoryUrl,
+                commitSha,
+                subdirectoryPath,
+                httpClient);
 
         // Verify that the subdirectory was loaded successfully
         subdirectoryContents.Should().NotBeNull("Subdirectory should be loaded");
@@ -210,7 +220,9 @@ public class LoadFromGitHubTests
         System.Console.WriteLine($"  Total Data Transfer: {totalBytesSent + totalBytesReceived:N0} bytes");
         System.Console.WriteLine($"  Subdirectory Content Size: {subtreeAggregateFileContentSize:N0} bytes");
         System.Console.WriteLine($"  Files in Subdirectory: {subdirectoryContents.Count}");
-        System.Console.WriteLine($"  Compression Ratio: {(double)totalBytesReceived / subtreeAggregateFileContentSize:F2}x");
+
+        System.Console.WriteLine(
+            $"  Compression Ratio: {(double)totalBytesReceived / subtreeAggregateFileContentSize:F2}x");
 
         // Assert bounds on data transfer
         // With blobless clone optimization, we:
@@ -226,7 +238,8 @@ public class LoadFromGitHubTests
         // for trees, commit, and pack file headers.
         var maxExpectedBytes = subtreeAggregateFileContentSize * 4 + 100_000;
 
-        totalBytesReceived.Should().BeLessThan(maxExpectedBytes,
+        totalBytesReceived.Should().BeLessThan(
+            maxExpectedBytes,
             $"Should optimize data transfer for subdirectory (received {totalBytesReceived:N0} bytes)");
     }
 
@@ -250,7 +263,9 @@ public class LoadFromGitHubTests
         : System.Net.Http.DelegatingHandler(innerHandler)
     {
         public int RequestCount { get; private set; }
+
         public long TotalBytesSent { get; private set; }
+
         public long TotalBytesReceived { get; private set; }
 
         protected override async Task<System.Net.Http.HttpResponseMessage> SendAsync(

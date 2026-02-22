@@ -40,13 +40,17 @@ public class ParseCommitTests
         // Assert author details
         commit.Author.Name.Should().Be("Michael Rätzel", "Author name should match");
         commit.Author.Email.Should().Be("michael@xn--michaelrtzel-ncb.com", "Author email should match");
-        commit.Author.Timestamp.Should().Be(new DateTimeOffset(2025, 10, 27, 7, 42, 57, TimeSpan.Zero),
+
+        commit.Author.Timestamp.Should().Be(
+            new DateTimeOffset(2025, 10, 27, 7, 42, 57, TimeSpan.Zero),
             "Author timestamp should match");
 
         // Assert committer details
         commit.Committer.Name.Should().Be("Michael Rätzel", "Committer name should match");
         commit.Committer.Email.Should().Be("michael@xn--michaelrtzel-ncb.com", "Committer email should match");
-        commit.Committer.Timestamp.Should().Be(new DateTimeOffset(2025, 10, 27, 7, 47, 18, TimeSpan.Zero),
+
+        commit.Committer.Timestamp.Should().Be(
+            new DateTimeOffset(2025, 10, 27, 7, 47, 18, TimeSpan.Zero),
             "Committer timestamp should match");
 
         // Assert message
@@ -128,11 +132,20 @@ public class ParseCommitTests
             commit.TreeHash.Should().NotBeNullOrEmpty($"Commit {commitObject.SHA1base16} should have a tree hash");
             commit.Author.Should().NotBeNull($"Commit {commitObject.SHA1base16} should have an author");
             commit.Author.Name.Should().NotBeNullOrEmpty($"Commit {commitObject.SHA1base16} author should have a name");
-            commit.Author.Email.Should().NotBeNullOrEmpty($"Commit {commitObject.SHA1base16} author should have an email");
+
+            commit.Author.Email.Should().NotBeNullOrEmpty(
+                $"Commit {commitObject.SHA1base16} author should have an email");
+
             commit.Committer.Should().NotBeNull($"Commit {commitObject.SHA1base16} should have a committer");
-            commit.Committer.Name.Should().NotBeNullOrEmpty($"Commit {commitObject.SHA1base16} committer should have a name");
-            commit.Committer.Email.Should().NotBeNullOrEmpty($"Commit {commitObject.SHA1base16} committer should have an email");
-            commit.ParentHashes.Should().NotBeNull($"Commit {commitObject.SHA1base16} should have a ParentHashes collection");
+
+            commit.Committer.Name.Should().NotBeNullOrEmpty(
+                $"Commit {commitObject.SHA1base16} committer should have a name");
+
+            commit.Committer.Email.Should().NotBeNullOrEmpty(
+                $"Commit {commitObject.SHA1base16} committer should have an email");
+
+            commit.ParentHashes.Should().NotBeNull(
+                $"Commit {commitObject.SHA1base16} should have a ParentHashes collection");
         }
     }
 
@@ -201,6 +214,7 @@ public class ParseCommitTests
         foreach (var parentHash in commit.ParentHashes)
         {
             parentHash.Should().HaveLength(40, "Parent hash should be a 40-character hex string");
+
             parentHash.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))
                 .Should().BeTrue($"Parent hash {parentHash} should be a valid lowercase hex string");
         }

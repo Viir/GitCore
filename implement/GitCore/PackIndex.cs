@@ -137,7 +137,9 @@ public static class PackIndex
         // Parse objects to build the initial list with offsets
         // We'll track both regular objects and deltas
         var regularObjects = new List<(long Offset, string SHA1, uint CRC32)>();
-        var deltaObjects = new List<(long Offset, PackFile.ObjectType Type, long BaseOffset, string? BaseSHA1, byte[] DeltaData, uint CRC32)>();
+
+        var deltaObjects =
+            new List<(long Offset, PackFile.ObjectType Type, long BaseOffset, string? BaseSHA1, byte[] DeltaData, uint CRC32)>();
 
         var offset = 12; // After header
         var sourceArray = packDataWithoutChecksum.Span.ToArray();
@@ -237,8 +239,15 @@ public static class PackIndex
 
         // Second pass: reconstruct delta objects
         // Build lookup maps for quick access
-        var objectsByOffset = regularObjects.ToDictionary(o => o.Offset, o => (o.SHA1, Data: (byte[]?)null, Type: (PackFile.ObjectType?)null));
-        var objectsBySHA1 = regularObjects.ToDictionary(o => o.SHA1, o => (o.Offset, Data: (byte[]?)null, Type: (PackFile.ObjectType?)null));
+        var objectsByOffset =
+            regularObjects.ToDictionary(
+                o => o.Offset,
+                o => (o.SHA1, Data: (byte[]?)null, Type: (PackFile.ObjectType?)null));
+
+        var objectsBySHA1 =
+            regularObjects.ToDictionary(
+                o => o.SHA1,
+                o => (o.Offset, Data: (byte[]?)null, Type: (PackFile.ObjectType?)null));
 
         // Also track delta objects by offset for chain resolution
         var deltasByOffset = deltaObjects.ToDictionary(d => d.Offset);
@@ -247,7 +256,8 @@ public static class PackIndex
         (byte[] Data, PackFile.ObjectType Type) GetObjectDataByOffset(long objOffset)
         {
             // Check if it's a regular object we've cached
-            if (objectsByOffset.TryGetValue(objOffset, out var cached) && cached.Data is not null && cached.Type is not null)
+            if (objectsByOffset.TryGetValue(objOffset, out var cached) && cached.Data is not null &&
+                cached.Type is not null)
             {
                 return (cached.Data, cached.Type.Value);
             }
@@ -297,6 +307,7 @@ public static class PackIndex
             if (objectsByOffset.TryGetValue(objOffset, out var entry))
             {
                 objectsByOffset[objOffset] = (entry.SHA1, data, objType);
+
                 if (objectsBySHA1.ContainsKey(entry.SHA1))
                 {
                     objectsBySHA1[entry.SHA1] = (objOffset, data, objType);
@@ -327,7 +338,9 @@ public static class PackIndex
             var (reconstructedData, baseType) = GetObjectDataByOffset(delta.Offset);
 
             // Calculate SHA1 of the reconstructed object
-            var objectHeader = System.Text.Encoding.UTF8.GetBytes($"{baseType.ToString().ToLower()} {reconstructedData.Length}\0");
+            var objectHeader =
+                System.Text.Encoding.UTF8.GetBytes($"{baseType.ToString().ToLower()} {reconstructedData.Length}\0");
+
             var dataForHash = new byte[objectHeader.Length + reconstructedData.Length];
             Array.Copy(objectHeader, 0, dataForHash, 0, objectHeader.Length);
             Array.Copy(reconstructedData, 0, dataForHash, objectHeader.Length, reconstructedData.Length);
@@ -376,6 +389,7 @@ public static class PackIndex
         // Build fanout table
         var fanoutOffset = 8;
         var currentCount = 0;
+
         for (var i = 0; i < 256; i++)
         {
             // Count how many objects have SHA1 starting with bytes <= i
@@ -383,11 +397,13 @@ public static class PackIndex
             {
                 currentCount++;
             }
+
             BinaryPrimitives.WriteUInt32BigEndian(span.Slice(fanoutOffset + i * 4, 4), (uint)currentCount);
         }
 
         // Write SHA1 table
         var sha1Offset = fanoutOffset + 1024;
+
         for (var i = 0; i < objectCount; i++)
         {
             var sha1Bytes = Convert.FromHexString(sortedObjects[i].SHA1);
@@ -396,6 +412,7 @@ public static class PackIndex
 
         // Write CRC table
         var crcOffset = sha1Offset + objectCount * 20;
+
         for (var i = 0; i < objectCount; i++)
         {
             BinaryPrimitives.WriteUInt32BigEndian(span.Slice(crcOffset + i * 4, 4), sortedObjects[i].CRC32);
@@ -403,9 +420,12 @@ public static class PackIndex
 
         // Write offset table
         var offsetTableOffset = crcOffset + objectCount * 4;
+
         for (var i = 0; i < objectCount; i++)
         {
-            BinaryPrimitives.WriteUInt32BigEndian(span.Slice(offsetTableOffset + i * 4, 4), (uint)sortedObjects[i].Offset);
+            BinaryPrimitives.WriteUInt32BigEndian(
+                span.Slice(offsetTableOffset + i * 4, 4),
+                (uint)sortedObjects[i].Offset);
         }
 
         // Write pack checksum
