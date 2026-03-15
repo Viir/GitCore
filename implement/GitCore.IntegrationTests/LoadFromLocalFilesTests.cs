@@ -386,7 +386,7 @@ public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
     public void FindGitDirectoryUpwards_empty_git_directory_is_skipped()
     {
         // Create a temporary directory with an empty .git subdirectory
-        var tempDir = Path.Combine(Path.GetTempPath(), "gitcore-empty-git-test-" + Guid.NewGuid().ToString("N")[..8]);
+        var tempDir = Path.Combine(Path.GetTempPath(), "git-test-" + Guid.NewGuid().ToString("N")[..8]);
 
         try
         {

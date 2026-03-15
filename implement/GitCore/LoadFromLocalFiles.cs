@@ -256,8 +256,8 @@ public static class LoadFromLocalFiles
         string startPath,
         out IReadOnlyList<string> checkedPaths)
     {
-        var checked_ = new List<string>();
-        checkedPaths = checked_;
+        var checkedCandidates = new List<string>();
+        checkedPaths = checkedCandidates;
 
         var current = ResolveStartDirectory(startPath);
 
@@ -268,7 +268,7 @@ public static class LoadFromLocalFiles
         {
             var candidate = Path.Combine(current, ".git");
 
-            checked_.Add(candidate);
+            checkedCandidates.Add(candidate);
 
             if (Directory.Exists(candidate) && DirectoryContainsAnyFile(candidate))
             {
