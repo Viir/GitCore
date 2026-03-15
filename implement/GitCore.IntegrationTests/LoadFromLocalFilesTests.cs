@@ -326,4 +326,85 @@ public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
                 $"SHA256 of {fileName} from GitCore should match git show output");
         }
     }
+
+    [Fact]
+    public void FindGitDirectoryUpwards_from_repository_root_finds_git_directory()
+    {
+        var repoDir = _fixture.RepoDirectory;
+
+        var result = LoadFromLocalFiles.FindGitDirectoryUpwards(repoDir, out var checkedPaths);
+
+        result.Should().NotBeNull("Should find the .git directory");
+        result.Should().Be(_fixture.GitDirectory, "Should return the .git directory path");
+        checkedPaths.Should().HaveCount(1, "Should check exactly one path when starting from the repo root");
+    }
+
+    [Fact]
+    public void FindGitDirectoryUpwards_from_subdirectory_finds_git_directory()
+    {
+        var repoDir = _fixture.RepoDirectory;
+
+        // Create a nested subdirectory inside the clone
+        var subDir = Path.Combine(repoDir, "sub", "nested");
+        Directory.CreateDirectory(subDir);
+
+        var result = LoadFromLocalFiles.FindGitDirectoryUpwards(subDir, out var checkedPaths);
+
+        result.Should().NotBeNull("Should find .git from a subdirectory");
+        result.Should().Be(_fixture.GitDirectory, "Should find the correct .git directory");
+        checkedPaths.Count.Should().BeGreaterThan(1,
+            "Should have checked more than one path when starting below the repo root");
+    }
+
+    [Fact]
+    public void FindGitDirectoryUpwards_from_file_finds_git_directory()
+    {
+        var repoDir = _fixture.RepoDirectory;
+
+        // Use a known file inside the repository
+        var filePath = Path.Combine(repoDir, "README.md");
+
+        var result = LoadFromLocalFiles.FindGitDirectoryUpwards(filePath, out var checkedPaths);
+
+        result.Should().NotBeNull("Should find the .git directory when starting from a file");
+        result.Should().Be(_fixture.GitDirectory);
+        checkedPaths.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public void FindGitDirectoryUpwards_nonexistent_path_returns_null()
+    {
+        var nonexistent = Path.Combine(Path.GetTempPath(), "does-not-exist-" + Guid.NewGuid().ToString("N"));
+
+        var result = LoadFromLocalFiles.FindGitDirectoryUpwards(nonexistent, out var checkedPaths);
+
+        result.Should().BeNull("Should return null for a nonexistent path");
+        checkedPaths.Should().BeEmpty("Should not check any paths when start path does not exist");
+    }
+
+    [Fact]
+    public void FindGitDirectoryUpwards_empty_git_directory_is_skipped()
+    {
+        // Create a temporary directory with an empty .git subdirectory
+        var tempDir = Path.Combine(Path.GetTempPath(), "gitcore-empty-git-test-" + Guid.NewGuid().ToString("N")[..8]);
+
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            Directory.CreateDirectory(Path.Combine(tempDir, ".git"));
+
+            var result = LoadFromLocalFiles.FindGitDirectoryUpwards(tempDir, out var checkedPaths);
+
+            // The empty .git directory should have been checked but not returned
+            checkedPaths.Should().Contain(Path.Combine(tempDir, ".git"),
+                "Should have checked the empty .git directory");
+            result.Should().NotBe(Path.Combine(tempDir, ".git"),
+                "Should not return an empty .git directory");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }

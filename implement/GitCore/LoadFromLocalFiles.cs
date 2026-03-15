@@ -222,6 +222,90 @@ public static class LoadFromLocalFiles
         return Convert.ToHexStringLower(sha1);
     }
 
+    /// <summary>
+    /// Searches upward from the given <paramref name="startPath"/> for the first directory
+    /// named <c>.git</c> that contains at least one file (recursively).
+    /// <para>
+    /// The search begins at <paramref name="startPath"/> itself (or its parent directory if
+    /// <paramref name="startPath"/> is a file) and walks up the directory tree toward the
+    /// filesystem root. At each level, the method checks whether a subdirectory named
+    /// <c>.git</c> exists and whether it contains at least one file anywhere inside it.
+    /// An empty <c>.git</c> directory (or one that contains only empty subdirectories) is
+    /// not considered a valid Git directory and is skipped.
+    /// </para>
+    /// <para>
+    /// If <paramref name="startPath"/> does not exist or is not a valid path, the method
+    /// returns <c>null</c> and <paramref name="checkedPaths"/> will be empty.
+    /// </para>
+    /// </summary>
+    /// <param name="startPath">
+    /// The path from which to begin searching. This may be a directory, a file, or a path
+    /// that does not exist. If it is a file, the search starts from its containing directory.
+    /// </param>
+    /// <param name="checkedPaths">
+    /// When the method returns, contains the list of <c>.git</c> candidate paths that were
+    /// inspected during the search, in the order they were checked (from the starting
+    /// directory upward). Each entry is the full path of the <c>.git</c> directory that was
+    /// examined, regardless of whether it was valid.
+    /// </param>
+    /// <returns>
+    /// The full path to the first valid <c>.git</c> directory found, or <c>null</c> if no
+    /// valid Git directory was found before reaching the filesystem root.
+    /// </returns>
+    public static string? FindGitDirectoryUpwards(
+        string startPath,
+        out IReadOnlyList<string> checkedPaths)
+    {
+        var checked_ = new List<string>();
+        checkedPaths = checked_;
+
+        var current = ResolveStartDirectory(startPath);
+
+        if (current is null)
+            return null;
+
+        while (current is not null)
+        {
+            var candidate = Path.Combine(current, ".git");
+
+            checked_.Add(candidate);
+
+            if (Directory.Exists(candidate) && DirectoryContainsAnyFile(candidate))
+            {
+                return candidate;
+            }
+
+            current = Directory.GetParent(current)?.FullName;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves the starting directory from a path that may point to a file, a directory,
+    /// or a location that does not exist.
+    /// Returns <c>null</c> when no usable directory can be determined.
+    /// </summary>
+    private static string? ResolveStartDirectory(string path)
+    {
+        if (Directory.Exists(path))
+            return Path.GetFullPath(path);
+
+        if (File.Exists(path))
+            return Path.GetDirectoryName(Path.GetFullPath(path));
+
+        return null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if the given directory contains at least one file, searching
+    /// recursively through all subdirectories.
+    /// </summary>
+    private static bool DirectoryContainsAnyFile(string directoryPath)
+    {
+        return Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories).Any();
+    }
+
     private static IEnumerable<PackFile.PackObject> LoadLooseObjects(string objectsDir)
     {
         foreach (var subDir in Directory.EnumerateDirectories(objectsDir))
