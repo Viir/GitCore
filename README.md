@@ -6,7 +6,10 @@ Pure managed C# implementation for reading from Git repositories.
 
 + Portable and simple
   + No dependencies on native code.
-  + No dependencies on file system.
++ Reading from local Git repositories
+  + Resolve HEAD and other references to commit SHAs.
+  + Load all files from any commit's tree.
+  + Supports both loose objects and pack files.
 + Cloning via [Git Smart HTTP](https://git-scm.com/book/en/v2/Git-on-the-Server-Smart-HTTP)
   + Efficient partial cloning of subdirectories.
   + Configurable API for caching git objects to make cloning more efficient.
@@ -18,6 +21,27 @@ NuGet: <https://www.nuget.org/packages/GitCore/>
 ```
 dotnet  add  package  GitCore
 ```
+
+### Load files from a local Git repository
+
+```csharp
+var gitDir = Path.Combine(repoRootDir, ".git");
+
+// Load all files from the current HEAD commit
+var filesAtHead = GitCore.LoadFromLocalFiles.LoadTreeContentsFromHead(gitDir);
+
+// Or resolve HEAD and load from a specific commit
+var commitSha = GitCore.LoadFromLocalFiles.ResolveHead(gitDir);
+var filesAtCommit = GitCore.LoadFromLocalFiles.LoadTreeContentsFromCommit(gitDir, commitSha);
+
+// Resolve any reference (branch, tag, etc.)
+var branchSha = GitCore.LoadFromLocalFiles.ResolveReference(gitDir, "refs/heads/main");
+
+// Load the full in-memory object store
+var repository = GitCore.LoadFromLocalFiles.LoadRepository(gitDir);
+```
+
+### Load files from a remote Git repository
 
 ```csharp
 var subdirectoryContents =
