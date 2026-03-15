@@ -13,11 +13,14 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="AwesomeAssertions" Version="9.2.1" />
-    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="9.0.10" />
-    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Version="1.9.0" />
-    <PackageReference Include="xunit.v3.core" Version="3.1.0" />
-    <PackageReference Include="xunit.v3.runner.console" Version="3.1.0" />
+    <PackageReference Include="AwesomeAssertions" Version="9.4.0" />
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.5" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Version="2.1.0" />
+    <PackageReference Include="xunit.v3.core" Version="3.2.2" />
+    <PackageReference Include="xunit.v3.runner.console" Version="3.2.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>
