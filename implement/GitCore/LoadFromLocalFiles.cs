@@ -188,6 +188,73 @@ public static class LoadFromLocalFiles
     }
 
     /// <summary>
+    /// Loads file contents from a subdirectory within the tree of a specific commit
+    /// in a local repository. Only blobs under the specified subdirectory are materialized.
+    /// </summary>
+    /// <param name="gitDirectory">Path to the .git directory.</param>
+    /// <param name="commitSha">
+    /// The 40-character hex SHA of the commit.
+    /// Use <see cref="ResolveReference"/> to obtain this from HEAD or a branch name.
+    /// </param>
+    /// <param name="subdirectoryPath">
+    /// Path components from the repository root to the subdirectory to load.
+    /// For example, ["implement", "GitCore"] loads only files under implement/GitCore/.
+    /// </param>
+    /// <returns>
+    /// A dictionary mapping file paths (relative to the subdirectory, as lists of path
+    /// components) to file contents. Only blob entries are included.
+    /// </returns>
+    public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadSubdirectoryContentsFromCommit(
+        string gitDirectory,
+        string commitSha,
+        IReadOnlyList<string> subdirectoryPath)
+    {
+        var repository = LoadRepository(gitDirectory);
+
+        var commitObject =
+            repository.GetObject(commitSha)
+            ?? throw new InvalidOperationException($"Commit {commitSha} not found in repository");
+
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
+        {
+            throw new InvalidOperationException($"Object {commitSha} is not a commit");
+        }
+
+        var commit = GitObjects.ParseCommit(commitObject.Data);
+
+        return
+            GitObjects.GetFilesFromSubdirectory(
+                commit.TreeHash,
+                subdirectoryPath,
+                sha => repository.GetObject(sha));
+    }
+
+    /// <summary>
+    /// Loads file contents from a subdirectory within the tree at the current HEAD
+    /// of a local repository. Only blobs under the specified subdirectory are materialized.
+    /// This is a convenience method that resolves HEAD and then loads the subdirectory.
+    /// </summary>
+    /// <param name="gitDirectory">Path to the .git directory.</param>
+    /// <param name="subdirectoryPath">
+    /// Path components from the repository root to the subdirectory to load.
+    /// For example, ["implement", "GitCore"] loads only files under implement/GitCore/.
+    /// </param>
+    /// <returns>
+    /// A dictionary mapping file paths (relative to the subdirectory, as lists of path
+    /// components) to file contents. Only blob entries are included.
+    /// </returns>
+    public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadSubdirectoryContentsFromHead(
+        string gitDirectory,
+        IReadOnlyList<string> subdirectoryPath)
+    {
+        var commitSha =
+            ResolveHead(gitDirectory)
+            ?? throw new InvalidOperationException("Could not resolve HEAD to a commit SHA");
+
+        return LoadSubdirectoryContentsFromCommit(gitDirectory, commitSha, subdirectoryPath);
+    }
+
+    /// <summary>
     /// Computes the SHA-1 hash of a Git tree object from its entries.
     /// This produces the same hash that Git would compute for an equivalent tree.
     /// </summary>

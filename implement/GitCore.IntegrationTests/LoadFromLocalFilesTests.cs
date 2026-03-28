@@ -1,7 +1,9 @@
 using AwesomeAssertions;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using Xunit;
 
@@ -328,6 +330,128 @@ public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
     }
 
     [Fact]
+    public void Load_subdirectory_contents_from_known_commit()
+    {
+        var gitDir = _fixture.GitDirectory;
+
+        // Use commit 0166a832097feb94bd565354b31559ccb355e0be ("parse commit properties and add API for reading commits") on main
+        var commitSha = "0166a832097feb94bd565354b31559ccb355e0be";
+
+        var subdirContents =
+            LoadFromLocalFiles.LoadSubdirectoryContentsFromCommit(
+                gitDir,
+                commitSha,
+                ["implement", "GitCore"]);
+
+        subdirContents.Should().NotBeNull("Subdirectory contents should be loaded");
+        subdirContents.Count.Should().Be(9, "implement/GitCore should contain 9 files at this commit");
+
+        // Verify well-known files exist with paths relative to the subdirectory
+        subdirContents.Should().ContainKey(["GitCore.csproj"]);
+        subdirContents.Should().ContainKey(["README.md"]);
+        subdirContents.Should().ContainKey(["Repository.cs"]);
+        subdirContents.Should().ContainKey(["GitObjects.cs"]);
+        subdirContents.Should().ContainKey(["LoadFromUrl.cs"]);
+        subdirContents.Should().ContainKey(["PackFile.cs"]);
+        subdirContents.Should().ContainKey(["PackIndex.cs"]);
+        subdirContents.Should().ContainKey(["GitSmartHttp.cs"]);
+        subdirContents.Should().ContainKey(["Common", "EnumerableExtensions.cs"]);
+
+        // Verify SHA256 hashes of file contents
+        ComputeSha256Hex(subdirContents[["GitCore.csproj"]]).Should().Be(
+            "892f9343f5165b461aef51aefd841a78eb1faa73a1ef678d2eadeb0f6dbe2906",
+            "SHA256 of GitCore.csproj should match");
+
+        ComputeSha256Hex(subdirContents[["README.md"]]).Should().Be(
+            "141f37bb8117bbb98551399270e5b12a0da4767e27bfa63366b72c668b1ccb62",
+            "SHA256 of README.md should match");
+
+        ComputeSha256Hex(subdirContents[["Repository.cs"]]).Should().Be(
+            "9b183d06142d2fc597d5cb935850fc1770b6be1651156c8665553a13e787bfc0",
+            "SHA256 of Repository.cs should match");
+    }
+
+    [Fact]
+    public void Load_subdirectory_contents_from_head()
+    {
+        var gitDir = _fixture.GitDirectory;
+        var repoDir = _fixture.RepoDirectory;
+
+        var subdirContents =
+            LoadFromLocalFiles.LoadSubdirectoryContentsFromHead(
+                gitDir,
+                ["implement", "GitCore"]);
+
+        subdirContents.Should().NotBeNull("Subdirectory contents should be loaded from HEAD");
+        subdirContents.Count.Should().BeGreaterThan(0, "Subdirectory should contain files");
+
+        // Verify well-known files exist with paths relative to the subdirectory
+        subdirContents.Should().ContainKey(["GitCore.csproj"]);
+        subdirContents.Should().ContainKey(["README.md"]);
+
+        // Verify SHA256 hashes of file contents match git executable output
+        foreach (var fileName in new[] { "GitCore.csproj", "README.md" })
+        {
+            var gitContent = RunGitCommandBytes(repoDir, $"show HEAD:implement/GitCore/{fileName}");
+            var expectedSha256 = Convert.ToHexStringLower(SHA256.HashData(gitContent));
+
+            ComputeSha256Hex(subdirContents[[fileName]]).Should().Be(
+                expectedSha256,
+                $"SHA256 of {fileName} from GitCore should match git show output");
+        }
+    }
+
+    [Fact]
+    public void Load_subdirectory_contents_matches_full_tree_filtered()
+    {
+        var gitDir = _fixture.GitDirectory;
+
+        // Use commit 0166a832097feb94bd565354b31559ccb355e0be ("parse commit properties and add API for reading commits") on main
+        var commitSha = "0166a832097feb94bd565354b31559ccb355e0be";
+
+        // Load all files, then filter to the subdirectory
+        var allFiles = LoadFromLocalFiles.LoadTreeContentsFromCommit(gitDir, commitSha);
+
+        var filteredFiles =
+            new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
+                comparer: GitCore.Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
+
+        foreach (var kvp in allFiles)
+        {
+            if (kvp.Key.Count >= 3 &&
+                kvp.Key[0] == "implement" &&
+                kvp.Key[1] == "GitCore")
+            {
+                filteredFiles[(IReadOnlyList<string>)kvp.Key.Skip(2).ToArray()] = kvp.Value;
+            }
+        }
+
+        // Load subdirectory contents directly
+        var subdirFiles =
+            LoadFromLocalFiles.LoadSubdirectoryContentsFromCommit(
+                gitDir,
+                commitSha,
+                ["implement", "GitCore"]);
+
+        // Both approaches should return the same number of files
+        subdirFiles.Count.Should().Be(
+            filteredFiles.Count,
+            "Subdirectory loading should return the same number of files as filtering the full tree");
+
+        // Verify each file matches
+        foreach (var kvp in filteredFiles)
+        {
+            subdirFiles.Should().ContainKey(
+                kvp.Key,
+                $"File {string.Join("/", kvp.Key)} should exist in subdirectory contents");
+
+            ComputeSha256Hex(subdirFiles[kvp.Key]).Should().Be(
+                ComputeSha256Hex(kvp.Value),
+                $"Content of {string.Join("/", kvp.Key)} should match between full tree and subdirectory loading");
+        }
+    }
+
+    [Fact]
     public void FindGitDirectoryUpwards_from_repository_root_finds_git_directory()
     {
         var repoDir = _fixture.RepoDirectory;
@@ -352,7 +476,9 @@ public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
 
         result.Should().NotBeNull("Should find .git from a subdirectory");
         result.Should().Be(_fixture.GitDirectory, "Should find the correct .git directory");
-        checkedPaths.Count.Should().BeGreaterThan(1,
+
+        checkedPaths.Count.Should().BeGreaterThan(
+            1,
             "Should have checked more than one path when starting below the repo root");
     }
 
@@ -396,9 +522,12 @@ public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
             var result = LoadFromLocalFiles.FindGitDirectoryUpwards(tempDir, out var checkedPaths);
 
             // The empty .git directory should have been checked but not returned
-            checkedPaths.Should().Contain(Path.Combine(tempDir, ".git"),
+            checkedPaths.Should().Contain(
+                Path.Combine(tempDir, ".git"),
                 "Should have checked the empty .git directory");
-            result.Should().NotBe(Path.Combine(tempDir, ".git"),
+
+            result.Should().NotBe(
+                Path.Combine(tempDir, ".git"),
                 "Should not return an empty .git directory");
         }
         finally
