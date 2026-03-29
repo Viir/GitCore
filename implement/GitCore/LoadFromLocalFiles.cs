@@ -190,6 +190,12 @@ public static class LoadFromLocalFiles
     /// <summary>
     /// Loads file contents from a subdirectory within the tree of a specific commit
     /// in a local repository. Only blobs under the specified subdirectory are materialized.
+    /// <para>
+    /// This method uses lazy (on-demand) object loading: instead of parsing every object
+    /// in the repository, it only parses the objects actually needed to traverse from the
+    /// commit to the requested subdirectory and read its blobs. This is much faster for
+    /// repositories with large pack files.
+    /// </para>
     /// </summary>
     /// <param name="gitDirectory">Path to the .git directory.</param>
     /// <param name="commitSha">
@@ -209,10 +215,10 @@ public static class LoadFromLocalFiles
         string commitSha,
         IReadOnlyList<string> subdirectoryPath)
     {
-        var repository = LoadRepository(gitDirectory);
+        var resolver = CreateLazyObjectResolver(gitDirectory);
 
         var commitObject =
-            repository.GetObject(commitSha)
+            resolver(commitSha)
             ?? throw new InvalidOperationException($"Commit {commitSha} not found in repository");
 
         if (commitObject.Type is not PackFile.ObjectType.Commit)
@@ -226,7 +232,7 @@ public static class LoadFromLocalFiles
             GitObjects.GetFilesFromSubdirectory(
                 commit.TreeHash,
                 subdirectoryPath,
-                sha => repository.GetObject(sha));
+                resolver);
     }
 
     /// <summary>
@@ -371,6 +377,177 @@ public static class LoadFromLocalFiles
     private static bool DirectoryContainsAnyFile(string directoryPath)
     {
         return Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories).Any();
+    }
+
+    /// <summary>
+    /// Creates a lazy object resolver function that parses objects on demand from a local
+    /// .git directory. Instead of loading all objects upfront, it only reads and decompresses
+    /// the specific objects requested via the returned function.
+    /// </summary>
+    /// <remarks>
+    /// The resolver first builds lightweight lookup tables from pack index (.idx) files and
+    /// loose object directory entries. When an object is requested by SHA, it is parsed from
+    /// the pack file or loose storage and cached for future lookups (including delta chain
+    /// resolution).
+    /// </remarks>
+    private static Func<string, PackFile.PackObject?> CreateLazyObjectResolver(string gitDirectory)
+    {
+        var objectsDir = Path.Combine(gitDirectory, "objects");
+
+        if (!Directory.Exists(objectsDir))
+        {
+            throw new InvalidOperationException($"Not a valid Git directory (missing objects/): {gitDirectory}");
+        }
+
+        // Build loose object SHA → file path index (without reading file contents)
+        var looseObjectPaths = new Dictionary<string, string>();
+
+        foreach (var subDir in Directory.EnumerateDirectories(objectsDir))
+        {
+            var dirName = Path.GetFileName(subDir);
+
+            if (dirName is "pack" or "info")
+                continue;
+
+            if (dirName.Length is not 2)
+                continue;
+
+            foreach (var file in Directory.EnumerateFiles(subDir))
+            {
+                var fileName = Path.GetFileName(file);
+
+                if (fileName.Length is not 38)
+                    continue;
+
+                var sha1Hex = dirName + fileName;
+                looseObjectPaths[sha1Hex] = file;
+            }
+        }
+
+        // Build pack file indexes: SHA → (packFilePath, offset) and per-pack metadata
+        var packDir = Path.Combine(objectsDir, "pack");
+
+        // Each pack is represented by its pre-loaded data and precomputed lookup structures
+        var packInfos =
+            new List<(
+            byte[] SourceArray,
+            Dictionary<string, PackIndex.IndexEntry> EntriesBySHA1,
+            Dictionary<int, int> CompressedRegionEnd)>();
+
+        if (Directory.Exists(packDir))
+        {
+            foreach (var packFile in Directory.EnumerateFiles(packDir, "*.pack"))
+            {
+                var idxFile = Path.ChangeExtension(packFile, ".idx");
+
+                if (!File.Exists(idxFile))
+                    continue;
+
+                var packData = (ReadOnlyMemory<byte>)File.ReadAllBytes(packFile);
+                var idxData = (ReadOnlyMemory<byte>)File.ReadAllBytes(idxFile);
+                var indexEntries = PackIndex.ParsePackIndexV2(idxData);
+
+                var dataWithoutChecksum = packData[..^20];
+                var sourceArray = dataWithoutChecksum.Span.ToArray();
+
+                var entriesBySHA1 = indexEntries.ToDictionary(e => e.SHA1base16, e => e);
+
+                var sortedOffsets = indexEntries.Select(e => (int)e.Offset).OrderBy(o => o).ToArray();
+                var compressedRegionEnd = new Dictionary<int, int>(sortedOffsets.Length);
+
+                for (var i = 0; i < sortedOffsets.Length; i++)
+                {
+                    compressedRegionEnd[sortedOffsets[i]] =
+                        (i + 1 < sortedOffsets.Length)
+                        ?
+                        sortedOffsets[i + 1]
+                        :
+                        sourceArray.Length;
+                }
+
+                packInfos.Add((sourceArray, entriesBySHA1, compressedRegionEnd));
+            }
+        }
+
+        // Shared cache for parsed objects (supports delta chain resolution across calls)
+        var cache = new Dictionary<string, PackFile.PackObject>();
+
+        // Per-pack offset cache for delta chain resolution
+        var objectsByOffsetPerPack =
+            packInfos.Select(_ => new Dictionary<long, (PackFile.ObjectType Type, byte[] Data)>()).ToArray();
+
+        return
+            sha =>
+            {
+                if (cache.TryGetValue(sha, out var cached))
+                {
+                    return cached;
+                }
+
+                // Try pack files first (most objects live in packs)
+                for (var i = 0; i < packInfos.Count; i++)
+                {
+                    var (sourceArray, entriesBySHA1, compressedRegionEnd) = packInfos[i];
+
+                    if (!entriesBySHA1.TryGetValue(sha, out var entry))
+                        continue;
+
+                    var (objectType, data) =
+                        PackFile.ParseObjectAtOffset(
+                            sourceArray,
+                            (int)entry.Offset,
+                            compressedRegionEnd,
+                            entriesBySHA1,
+                            objectsByOffsetPerPack[i]);
+
+                    var packObject = new PackFile.PackObject(objectType, data.Length, data, sha);
+                    cache[sha] = packObject;
+                    return packObject;
+                }
+
+                // Try loose objects
+                if (looseObjectPaths.TryGetValue(sha, out var filePath))
+                {
+                    var compressedData = File.ReadAllBytes(filePath);
+                    var decompressedData = DecompressLooseObject(compressedData);
+
+                    var nullIndex = Array.IndexOf(decompressedData, (byte)0);
+
+                    if (nullIndex < 0)
+                    {
+                        throw new InvalidOperationException($"Invalid loose object format for {sha}");
+                    }
+
+                    var header = Encoding.UTF8.GetString(decompressedData, 0, nullIndex);
+                    var spaceIndex = header.IndexOf(' ');
+
+                    if (spaceIndex < 0)
+                    {
+                        throw new InvalidOperationException($"Invalid loose object header for {sha}: {header}");
+                    }
+
+                    var typeStr = header[..spaceIndex];
+                    var content = decompressedData.AsMemory()[(nullIndex + 1)..];
+
+                    var objectType =
+                        typeStr switch
+                        {
+                            "commit" => PackFile.ObjectType.Commit,
+                            "tree" => PackFile.ObjectType.Tree,
+                            "blob" => PackFile.ObjectType.Blob,
+                            "tag" => PackFile.ObjectType.Tag,
+
+                            _ =>
+                            throw new InvalidOperationException($"Unknown object type: {typeStr}")
+                        };
+
+                    var packObject = new PackFile.PackObject(objectType, content.Length, content, sha);
+                    cache[sha] = packObject;
+                    return packObject;
+                }
+
+                return null;
+            };
     }
 
     private static IEnumerable<PackFile.PackObject> LoadLooseObjects(string objectsDir)

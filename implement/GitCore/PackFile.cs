@@ -246,9 +246,30 @@ public static class PackFile
 
         var dataWithoutChecksum = packFileData[..^20];
 
+        /*
+         * Since Inflater.SetInput only takes arrays, we convert the span to an array once.
+         * An earlier version did convert to an array per object, but that is expensive for large pack files.
+         * */
+        var sourceArray = dataWithoutChecksum.Span.ToArray();
+
         // Build lookup maps for quick access
         var entriesByOffset = indexEntries.ToDictionary(e => e.Offset, e => e);
         var entriesBySHA1 = indexEntries.ToDictionary(e => e.SHA1base16, e => e);
+
+        // Compute compressed region upper bounds from sorted index offsets,
+        // so we can slice compressed data without calling FindCompressedLength.
+        var sortedOffsets = indexEntries.Select(e => (int)e.Offset).OrderBy(o => o).ToArray();
+        var compressedRegionEnd = new Dictionary<int, int>(sortedOffsets.Length);
+
+        for (var i = 0; i < sortedOffsets.Length; i++)
+        {
+            compressedRegionEnd[sortedOffsets[i]] =
+                (i + 1 < sortedOffsets.Length)
+                ?
+                sortedOffsets[i + 1]
+                :
+                sourceArray.Length;
+        }
 
         // First pass: parse regular objects and store them for delta reconstruction
         var objectsByOffset = new Dictionary<long, (ObjectType Type, byte[] Data)>();
@@ -262,7 +283,7 @@ public static class PackFile
                 return cached;
             }
 
-            var sourceArray = dataWithoutChecksum.Span.ToArray();
+            // sourceArray is captured from the outer scope — no per-call copy
             var pos = objOffset;
             var startPos = pos;
 
@@ -299,10 +320,9 @@ public static class PackFile
                 // Get base object
                 var (baseType, baseData) = ParseObjectAt((int)baseOffset);
 
-                // Decompress delta data
-                // Find compressed length by trying to decompress
-                var compressedLength = FindCompressedLength(sourceArray, pos, (int)size);
-                var compressedData = sourceArray.AsSpan().Slice(pos, compressedLength);
+                // Decompress delta data using index-derived upper bound
+                var maxCompressed = compressedRegionEnd[objOffset] - pos;
+                var compressedData = sourceArray.AsSpan().Slice(pos, maxCompressed);
                 var deltaData = DecompressZlib(compressedData, (int)size);
 
                 // Apply delta
@@ -332,9 +352,9 @@ public static class PackFile
                     baseObj = ParseObjectAt((int)baseEntry.Offset);
                 }
 
-                // Decompress delta data
-                var compressedLength = FindCompressedLength(sourceArray, pos, (int)size);
-                var compressedData = sourceArray.AsSpan().Slice(pos, compressedLength);
+                // Decompress delta data using index-derived upper bound
+                var maxCompressed = compressedRegionEnd[objOffset] - pos;
+                var compressedData = sourceArray.AsSpan().Slice(pos, maxCompressed);
                 var deltaData = DecompressZlib(compressedData, (int)size);
 
                 // Apply delta
@@ -347,10 +367,9 @@ public static class PackFile
             }
             else
             {
-                // Regular object
-                // Find compressed length
-                var compressedLength = FindCompressedLength(sourceArray, pos, (int)size);
-                var compressedData = sourceArray.AsSpan().Slice(pos, compressedLength);
+                // Regular object — use index-derived upper bound instead of FindCompressedLength
+                var maxCompressed = compressedRegionEnd[objOffset] - pos;
+                var compressedData = sourceArray.AsSpan().Slice(pos, maxCompressed);
                 var decompressedData = DecompressZlib(compressedData, (int)size);
 
                 var result = (objectType, decompressedData);
@@ -392,6 +411,120 @@ public static class PackFile
         }
 
         return objects;
+    }
+
+    /// <summary>
+    /// Parses a single object at the given offset from a pack file, resolving delta chains as needed.
+    /// This is used for on-demand (lazy) object loading where only specific objects are needed.
+    /// </summary>
+    /// <param name="sourceArray">The pack file data (without the trailing 20-byte checksum) as a byte array.</param>
+    /// <param name="objOffset">The byte offset of the object within the pack file.</param>
+    /// <param name="compressedRegionEnd">
+    /// A dictionary mapping object start offsets to the end of their compressed region
+    /// (i.e., the start offset of the next object, or end of data for the last object).
+    /// </param>
+    /// <param name="entriesBySHA1">Index entries keyed by SHA1 hex, for RefDelta resolution.</param>
+    /// <param name="objectsByOffset">Cache of already-parsed objects keyed by offset.</param>
+    /// <returns>The object type and decompressed data.</returns>
+    internal static (ObjectType Type, byte[] Data) ParseObjectAtOffset(
+        byte[] sourceArray,
+        int objOffset,
+        Dictionary<int, int> compressedRegionEnd,
+        Dictionary<string, PackIndex.IndexEntry> entriesBySHA1,
+        Dictionary<long, (ObjectType Type, byte[] Data)> objectsByOffset)
+    {
+        if (objectsByOffset.TryGetValue(objOffset, out var cached))
+        {
+            return cached;
+        }
+
+        var pos = objOffset;
+        var startPos = pos;
+
+        // Read object type and size from variable-length encoding
+        var currentByte = sourceArray[pos++];
+        var objectType = (ObjectType)((currentByte >> 4) & 0x7);
+        long size = currentByte & 0xF;
+        var shift = 4;
+
+        while ((currentByte & 0x80) is not 0)
+        {
+            currentByte = sourceArray[pos++];
+            size |= (long)(currentByte & 0x7F) << shift;
+            shift += 7;
+        }
+
+        if (objectType is ObjectType.OfsDelta)
+        {
+            var negativeOffset = 0L;
+            currentByte = sourceArray[pos++];
+            negativeOffset = currentByte & 0x7F;
+
+            while ((currentByte & 0x80) is not 0)
+            {
+                currentByte = sourceArray[pos++];
+                negativeOffset = ((negativeOffset + 1) << 7) | ((long)currentByte & 0x7F);
+            }
+
+            var baseOffset = startPos - negativeOffset;
+
+            var (baseType, baseData) =
+                ParseObjectAtOffset(
+                    sourceArray,
+                    (int)baseOffset,
+                    compressedRegionEnd,
+                    entriesBySHA1,
+                    objectsByOffset);
+
+            var maxCompressed = compressedRegionEnd[objOffset] - pos;
+            var compressedData = sourceArray.AsSpan().Slice(pos, maxCompressed);
+            var deltaData = DecompressZlib(compressedData, (int)size);
+            var reconstructedData = ApplyDelta(baseData, deltaData);
+
+            var result = (baseType, reconstructedData);
+            objectsByOffset[objOffset] = result;
+            return result;
+        }
+        else if (objectType is ObjectType.RefDelta)
+        {
+            var baseSHA1Bytes = sourceArray.AsSpan().Slice(pos, 20);
+            var baseSHA1 = Convert.ToHexStringLower(baseSHA1Bytes);
+            pos += 20;
+
+            (ObjectType Type, byte[] Data) baseObj;
+
+            if (!entriesBySHA1.TryGetValue(baseSHA1, out var baseEntry))
+            {
+                throw new InvalidOperationException($"Base object {baseSHA1} not found for RefDelta");
+            }
+
+            baseObj =
+                ParseObjectAtOffset(
+                    sourceArray,
+                    (int)baseEntry.Offset,
+                    compressedRegionEnd,
+                    entriesBySHA1,
+                    objectsByOffset);
+
+            var maxCompressed = compressedRegionEnd[objOffset] - pos;
+            var compressedData = sourceArray.AsSpan().Slice(pos, maxCompressed);
+            var deltaData = DecompressZlib(compressedData, (int)size);
+            var reconstructedData = ApplyDelta(baseObj.Data, deltaData);
+
+            var result = (baseObj.Type, reconstructedData);
+            objectsByOffset[objOffset] = result;
+            return result;
+        }
+        else
+        {
+            var maxCompressed = compressedRegionEnd[objOffset] - pos;
+            var compressedData = sourceArray.AsSpan().Slice(pos, maxCompressed);
+            var decompressedData = DecompressZlib(compressedData, (int)size);
+
+            var result = (objectType, decompressedData);
+            objectsByOffset[objOffset] = result;
+            return result;
+        }
     }
 
     internal static int FindCompressedLength(byte[] data, int startOffset, int expectedDecompressedSize)
