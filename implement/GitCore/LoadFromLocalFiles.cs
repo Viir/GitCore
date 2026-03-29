@@ -510,38 +510,7 @@ public static class LoadFromLocalFiles
                 {
                     var compressedData = File.ReadAllBytes(filePath);
                     var decompressedData = DecompressLooseObject(compressedData);
-
-                    var nullIndex = Array.IndexOf(decompressedData, (byte)0);
-
-                    if (nullIndex < 0)
-                    {
-                        throw new InvalidOperationException($"Invalid loose object format for {sha}");
-                    }
-
-                    var header = Encoding.UTF8.GetString(decompressedData, 0, nullIndex);
-                    var spaceIndex = header.IndexOf(' ');
-
-                    if (spaceIndex < 0)
-                    {
-                        throw new InvalidOperationException($"Invalid loose object header for {sha}: {header}");
-                    }
-
-                    var typeStr = header[..spaceIndex];
-                    var content = decompressedData.AsMemory()[(nullIndex + 1)..];
-
-                    var objectType =
-                        typeStr switch
-                        {
-                            "commit" => PackFile.ObjectType.Commit,
-                            "tree" => PackFile.ObjectType.Tree,
-                            "blob" => PackFile.ObjectType.Blob,
-                            "tag" => PackFile.ObjectType.Tag,
-
-                            _ =>
-                            throw new InvalidOperationException($"Unknown object type: {typeStr}")
-                        };
-
-                    var packObject = new PackFile.PackObject(objectType, content.Length, content, sha);
+                    var packObject = ParseLooseObjectData(decompressedData, sha);
                     cache[sha] = packObject;
                     return packObject;
                 }
@@ -577,40 +546,48 @@ public static class LoadFromLocalFiles
                 var compressedData = File.ReadAllBytes(file);
                 var decompressedData = DecompressLooseObject(compressedData);
 
-                // Parse the header: "<type> <size>\0<content>"
-                var nullIndex = Array.IndexOf(decompressedData, (byte)0);
-
-                if (nullIndex < 0)
-                {
-                    throw new InvalidOperationException($"Invalid loose object format for {sha1Hex}");
-                }
-
-                var header = Encoding.UTF8.GetString(decompressedData, 0, nullIndex);
-                var spaceIndex = header.IndexOf(' ');
-
-                if (spaceIndex < 0)
-                {
-                    throw new InvalidOperationException($"Invalid loose object header for {sha1Hex}: {header}");
-                }
-
-                var typeStr = header[..spaceIndex];
-                var content = decompressedData.AsMemory()[(nullIndex + 1)..];
-
-                var objectType =
-                    typeStr switch
-                    {
-                        "commit" => PackFile.ObjectType.Commit,
-                        "tree" => PackFile.ObjectType.Tree,
-                        "blob" => PackFile.ObjectType.Blob,
-                        "tag" => PackFile.ObjectType.Tag,
-
-                        _ =>
-                        throw new InvalidOperationException($"Unknown object type: {typeStr}")
-                    };
-
-                yield return new PackFile.PackObject(objectType, content.Length, content, sha1Hex);
+                yield return ParseLooseObjectData(decompressedData, sha1Hex);
             }
         }
+    }
+
+    /// <summary>
+    /// Parses a decompressed loose object byte array into a <see cref="PackFile.PackObject"/>.
+    /// The data is expected to have the format: "&lt;type&gt; &lt;size&gt;\0&lt;content&gt;".
+    /// </summary>
+    private static PackFile.PackObject ParseLooseObjectData(byte[] decompressedData, string sha1Hex)
+    {
+        var nullIndex = Array.IndexOf(decompressedData, (byte)0);
+
+        if (nullIndex < 0)
+        {
+            throw new InvalidOperationException($"Invalid loose object format for {sha1Hex}");
+        }
+
+        var header = Encoding.UTF8.GetString(decompressedData, 0, nullIndex);
+        var spaceIndex = header.IndexOf(' ');
+
+        if (spaceIndex < 0)
+        {
+            throw new InvalidOperationException($"Invalid loose object header for {sha1Hex}: {header}");
+        }
+
+        var typeStr = header[..spaceIndex];
+        var content = decompressedData.AsMemory()[(nullIndex + 1)..];
+
+        var objectType =
+            typeStr switch
+            {
+                "commit" => PackFile.ObjectType.Commit,
+                "tree" => PackFile.ObjectType.Tree,
+                "blob" => PackFile.ObjectType.Blob,
+                "tag" => PackFile.ObjectType.Tag,
+
+                _ =>
+                throw new InvalidOperationException($"Unknown object type: {typeStr}")
+            };
+
+        return new PackFile.PackObject(objectType, content.Length, content, sha1Hex);
     }
 
     private static byte[] DecompressLooseObject(byte[] compressedData)
