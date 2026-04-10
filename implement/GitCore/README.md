@@ -36,15 +36,17 @@ var commitSha = GitCore.LoadFromLocalFiles.ResolveHead(gitDir);
 var filesAtCommit = GitCore.LoadFromLocalFiles.LoadTreeContentsFromCommit(gitDir, commitSha);
 
 // Load only files under a specific subdirectory (paths relative to subdirectory)
-var subdirFiles = GitCore.LoadFromLocalFiles.LoadSubdirectoryContentsFromHead(
-    gitDir,
-    ["implement", "Pine.Core"]);
+var subdirFiles =
+    GitCore.LoadFromLocalFiles.LoadSubdirectoryContentsFromHead(
+        gitDir,
+        ["implement", "Pine.Core"]);
 
 // Or from a specific commit
-var subdirFilesAtCommit = GitCore.LoadFromLocalFiles.LoadSubdirectoryContentsFromCommit(
-    gitDir,
-    commitSha,
-    ["implement", "Pine.Core"]);
+var subdirFilesAtCommit =
+    GitCore.LoadFromLocalFiles.LoadSubdirectoryContentsFromCommit(
+        gitDir,
+        commitSha,
+        ["implement", "Pine.Core"]);
 
 // Resolve any reference (branch, tag, etc.)
 var branchSha = GitCore.LoadFromLocalFiles.ResolveReference(gitDir, "refs/heads/main");
