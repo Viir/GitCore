@@ -7,6 +7,36 @@ namespace GitCore.UnitTests;
 public class ParsePackFileTests
 {
     [Fact]
+    public void Parse_pack_index_v2_with_multiple_large_offsets()
+    {
+        var indexData = TestData.LoadPackIndexV2LargeOffsets();
+
+        var indexEntries = PackIndex.ParsePackIndexV2(indexData);
+
+        indexEntries.Should().HaveCount(6);
+
+        indexEntries.Should().Contain(
+            entry =>
+            entry.SHA1base16 == "14eb05f5beac67cdf2a229394baa626338a3d92e" &&
+            entry.Offset == 4_294_967_308);
+
+        indexEntries.Should().Contain(
+            entry =>
+            entry.SHA1base16 == "565ed90978eb8a077e87ebaf583a9efd74afdeb1" &&
+            entry.Offset == 8_589_937_183);
+
+        indexEntries.Should().Contain(
+            entry =>
+            entry.SHA1base16 == "8ba2247ab0a7fca6750be46db85f80344ae0df44" &&
+            entry.Offset == 12_884_902_052);
+
+        indexEntries.Should().Contain(
+            entry =>
+            entry.SHA1base16 == "f1d9a5bbe103d120903d51a0c3f615ec8135c4ce" &&
+            entry.Offset == 318);
+    }
+
+    [Fact]
     public void Parse_pack_files_2025_10_27()
     {
         var filesFromClone = TestData.LoadTestDataFiles_2025_10_27();

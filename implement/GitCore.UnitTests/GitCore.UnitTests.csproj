@@ -29,6 +29,10 @@
     <Link>TestData\2025-10-27-clone\files-after-git-clone\%(RecursiveDir)%(Filename)%(Extension)</Link>
     <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
   </Content>
+  <Content Include="..\TestData\2026-08-07-pack-index-v2-large-offsets\*.idx">
+    <Link>TestData\2026-08-07-pack-index-v2-large-offsets\%(Filename)%(Extension)</Link>
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+  </Content>
 </ItemGroup>
 
 </Project>

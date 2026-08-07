@@ -31,9 +31,6 @@ public static class PackIndex
     /// <exception cref="ArgumentException">
     /// Thrown when the signature is invalid or the version is not2.
     /// </exception>
-    /// <exception cref="NotImplementedException">
-    /// Thrown when the index references64-bit object offsets which are not supported by this parser yet.
-    /// </exception>
     public static IReadOnlyList<IndexEntry> ParsePackIndexV2(ReadOnlyMemory<byte> indexData)
     {
         var span = indexData.Span;
@@ -67,6 +64,20 @@ public static class PackIndex
         // Offset table starts after CRC table (objectCount * 4 bytes)
         var offsetTableOffset = crcTableOffset + (int)objectCount * 4;
 
+        // Large-offset table starts after the 32-bit offset table
+        var largeOffsetTableOffset = offsetTableOffset + (int)objectCount * 4;
+        var largeOffsetCount = 0;
+
+        for (var i = 0; i < objectCount; i++)
+        {
+            var offsetValue = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offsetTableOffset + i * 4, 4));
+
+            if ((offsetValue & 0x80000000u) is not 0)
+            {
+                largeOffsetCount++;
+            }
+        }
+
         var entries = new List<IndexEntry>();
 
         for (var i = 0; i < objectCount; i++)
@@ -83,10 +94,26 @@ public static class PackIndex
             var offsetValue = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offsetTableOffset + i * 4, 4));
             long offset;
 
-            if ((offsetValue & 0x80000000) is not 0)
+            if ((offsetValue & 0x80000000u) is not 0)
             {
-                // 64-bit offset - not handling this for now
-                throw new NotImplementedException("64-bit offsets not yet supported");
+                var largeOffsetIndex = offsetValue & 0x7FFFFFFFu;
+
+                if (largeOffsetIndex >= largeOffsetCount)
+                {
+                    throw new ArgumentException($"Large-offset table index is out of range: {largeOffsetIndex}");
+                }
+
+                var largeOffsetPosition = largeOffsetTableOffset + largeOffsetIndex * 8L;
+
+                var largeOffsetValue =
+                    BinaryPrimitives.ReadUInt64BigEndian(span.Slice((int)largeOffsetPosition, 8));
+
+                if (largeOffsetValue > long.MaxValue)
+                {
+                    throw new ArgumentException($"Pack offset is too large: {largeOffsetValue}");
+                }
+
+                offset = (long)largeOffsetValue;
             }
             else
             {

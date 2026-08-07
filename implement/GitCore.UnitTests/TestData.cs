@@ -10,6 +10,20 @@ using FilePath = IReadOnlyList<string>;
 
 public class TestData
 {
+    public static ReadOnlyMemory<byte> LoadPackIndexV2LargeOffsets()
+    {
+        var testDataFile =
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "TestData",
+                "2026-08-07-pack-index-v2-large-offsets",
+                "pack-index-v2-large-offsets.idx");
+
+        File.Exists(testDataFile).Should().BeTrue($"Missing test data at: {testDataFile}");
+
+        return File.ReadAllBytes(testDataFile);
+    }
+
     public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTestDataFiles_2025_10_27()
     {
         var testDataDir =
