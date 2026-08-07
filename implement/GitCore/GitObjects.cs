@@ -7,6 +7,9 @@ using System.Text.RegularExpressions;
 
 namespace GitCore;
 
+/// <summary>
+/// Provides parsers and traversal helpers for core Git object types.
+/// </summary>
 public static partial class GitObjects
 {
     /// <summary>
@@ -27,11 +30,17 @@ public static partial class GitObjects
         CommitSignature Committer,
         string Message);
 
+    /// <summary>
+    /// Represents an entry stored in a Git tree object.
+    /// </summary>
     public record TreeEntry(
         string Mode,
         string Name,
         string HashBase16);
 
+    /// <summary>
+    /// Represents a parsed Git tree object.
+    /// </summary>
     public record TreeObject(
         IReadOnlyList<TreeEntry> Entries);
 
@@ -141,6 +150,9 @@ public static partial class GitObjects
         return new CommitSignature(name, email, dateTimeWithOffset);
     }
 
+    /// <summary>
+    /// Parses a Git tree object from its raw byte data.
+    /// </summary>
     public static TreeObject ParseTree(ReadOnlyMemory<byte> data)
     {
         var entries = new List<TreeEntry>();
@@ -182,11 +194,17 @@ public static partial class GitObjects
         return new TreeObject(entries);
     }
 
+    /// <summary>
+    /// Gets the content carried by a Git blob object.
+    /// </summary>
     public static ReadOnlyMemory<byte> GetBlobContent(ReadOnlyMemory<byte> data)
     {
         return data;
     }
 
+    /// <summary>
+    /// Gets the immediate files contained in a Git tree.
+    /// </summary>
     public static IReadOnlyDictionary<string, ReadOnlyMemory<byte>> GetFilesFromTree(
         string treeHashBase16,
         IReadOnlyDictionary<string, PackFile.PackObject> objectsByHashBase16)
@@ -227,6 +245,9 @@ public static partial class GitObjects
         return files;
     }
 
+    /// <summary>
+    /// Recursively gets all files contained in a Git tree.
+    /// </summary>
     public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetAllFilesFromTree(
         string treeHashBase16,
         Func<string, PackFile.PackObject?> getObjectByHashBase16,
@@ -283,10 +304,6 @@ public static partial class GitObjects
     /// <summary>
     /// Gets files from a specific subdirectory within a tree.
     /// </summary>
-    /// <param name="treeHashBase16">The hash of the root tree</param>
-    /// <param name="subdirectoryPath">Path components to the subdirectory (e.g., ["implement", "GitCore"])</param>
-    /// <param name="getObjectByHashBase16">Function to retrieve objects by hash</param>
-    /// <returns>Dictionary of file paths (relative to subdirectory) to their contents</returns>
     public static IReadOnlyDictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>> GetFilesFromSubdirectory(
         string treeHashBase16,
         IReadOnlyList<string> subdirectoryPath,
@@ -331,6 +348,9 @@ public static partial class GitObjects
         return GetAllFilesFromTree(currentTreeHash, getObjectByHashBase16, pathPrefix: []);
     }
 
+    /// <summary>
+    /// Gets a named file from a Git commit.
+    /// </summary>
     public static ReadOnlyMemory<byte> GetFileFromCommit(
         string commitHashBase16,
         string fileName,

@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Text;
 
@@ -26,63 +25,30 @@ public static class LoadFromLocalFiles
     /// <returns>A Repository containing all objects found in the local .git directory.</returns>
     public static Repository LoadRepository(string gitDirectory)
     {
-        if (!Directory.Exists(gitDirectory))
-        {
-            throw new DirectoryNotFoundException($"Git directory not found: {gitDirectory}");
-        }
-
-        var objectsDir = Path.Combine(gitDirectory, "objects");
-
-        if (!Directory.Exists(objectsDir))
-        {
-            throw new InvalidOperationException($"Not a valid Git directory (missing objects/): {gitDirectory}");
-        }
-
-        var allObjects = ImmutableDictionary.CreateBuilder<string, PackFile.PackObject>();
-
-        // Load loose objects
-        foreach (var looseObject in LoadLooseObjects(objectsDir))
-        {
-            allObjects[looseObject.SHA1base16] = looseObject;
-        }
-
-        // Load pack files
-        var packDir = Path.Combine(objectsDir, "pack");
-
-        if (Directory.Exists(packDir))
-        {
-            foreach (var packFile in Directory.EnumerateFiles(packDir, "*.pack"))
-            {
-                var idxFile = Path.ChangeExtension(packFile, ".idx");
-
-                if (File.Exists(idxFile))
+        using var localRepository =
+            LocalGitRepository.Open(
+                gitDirectory,
+                new LocalRepositoryOptions
                 {
-                    var packData = (ReadOnlyMemory<byte>)File.ReadAllBytes(packFile);
-                    var idxData = (ReadOnlyMemory<byte>)File.ReadAllBytes(idxFile);
+                    CacheBlobContents = true,
+                    MaximumCachedObjectBytes = null,
+                    MaximumCachedObjectCount = null
+                });
 
-                    var indexEntries = PackIndex.ParsePackIndexV2(idxData);
-                    var objects = PackFile.ParseAllObjects(packData, indexEntries);
+        var allObjects =
+            localRepository.ObjectIds
+            .Select(localRepository.GetRequiredObject)
+            .ToImmutableDictionary(
+                gitObject => gitObject.ObjectId,
+                gitObject =>
+                new PackFile.PackObject(
+                    gitObject.Type,
+                    gitObject.Size,
+                    gitObject.Data,
+                    gitObject.ObjectId),
+                StringComparer.Ordinal);
 
-                    foreach (var obj in objects)
-                    {
-                        allObjects[obj.SHA1base16] = obj;
-                    }
-                }
-                else
-                {
-                    // No index file - parse directly
-                    var packData = (ReadOnlyMemory<byte>)File.ReadAllBytes(packFile);
-                    var objects = PackFile.ParseAllObjectsDirectly(packData);
-
-                    foreach (var obj in objects)
-                    {
-                        allObjects[obj.SHA1base16] = obj;
-                    }
-                }
-            }
-        }
-
-        return new Repository(allObjects.ToImmutable());
+        return new Repository(allObjects);
     }
 
     /// <summary>
@@ -108,30 +74,7 @@ public static class LoadFromLocalFiles
     /// <returns>The 40-character hex commit SHA, or null if the reference cannot be resolved.</returns>
     public static string? ResolveReference(string gitDirectory, string reference)
     {
-        var refPath = Path.Combine(gitDirectory, reference);
-
-        if (!File.Exists(refPath))
-        {
-            // Try packed-refs
-            return ResolveFromPackedRefs(gitDirectory, reference);
-        }
-
-        var content = File.ReadAllText(refPath).Trim();
-
-        // Check if it's a symbolic reference
-        if (content.StartsWith("ref: "))
-        {
-            var targetRef = content[5..];
-            return ResolveReference(gitDirectory, targetRef);
-        }
-
-        // It's a direct SHA
-        if (content.Length == 40 && content.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
-        {
-            return content;
-        }
-
-        return null;
+        return LocalGitRepository.ResolveReferenceAtPath(gitDirectory, reference);
     }
 
     /// <summary>
@@ -150,23 +93,8 @@ public static class LoadFromLocalFiles
         string gitDirectory,
         string commitSha)
     {
-        var repository = LoadRepository(gitDirectory);
-
-        var commitObject =
-            repository.GetObject(commitSha)
-            ?? throw new InvalidOperationException($"Commit {commitSha} not found in repository");
-
-        if (commitObject.Type is not PackFile.ObjectType.Commit)
-        {
-            throw new InvalidOperationException($"Object {commitSha} is not a commit");
-        }
-
-        var commit = GitObjects.ParseCommit(commitObject.Data);
-
-        return
-            GitObjects.GetAllFilesFromTree(
-                commit.TreeHash,
-                sha => repository.GetObject(sha));
+        using var repository = LocalGitRepository.Open(gitDirectory);
+        return MaterializeFiles(repository, repository.EnumerateTree(commitSha));
     }
 
     /// <summary>
@@ -180,11 +108,13 @@ public static class LoadFromLocalFiles
     public static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadTreeContentsFromHead(
         string gitDirectory)
     {
+        using var repository = LocalGitRepository.Open(gitDirectory);
+
         var commitSha =
-            ResolveHead(gitDirectory)
+            repository.ResolveHead()
             ?? throw new InvalidOperationException("Could not resolve HEAD to a commit SHA");
 
-        return LoadTreeContentsFromCommit(gitDirectory, commitSha);
+        return MaterializeFiles(repository, repository.EnumerateTree(commitSha));
     }
 
     /// <summary>
@@ -215,24 +145,9 @@ public static class LoadFromLocalFiles
         string commitSha,
         IReadOnlyList<string> subdirectoryPath)
     {
-        var resolver = CreateLazyObjectResolver(gitDirectory);
-
-        var commitObject =
-            resolver(commitSha)
-            ?? throw new InvalidOperationException($"Commit {commitSha} not found in repository");
-
-        if (commitObject.Type is not PackFile.ObjectType.Commit)
-        {
-            throw new InvalidOperationException($"Object {commitSha} is not a commit");
-        }
-
-        var commit = GitObjects.ParseCommit(commitObject.Data);
-
-        return
-            GitObjects.GetFilesFromSubdirectory(
-                commit.TreeHash,
-                subdirectoryPath,
-                resolver);
+        ArgumentNullException.ThrowIfNull(subdirectoryPath);
+        using var repository = LocalGitRepository.Open(gitDirectory);
+        return LoadSubdirectoryContents(repository, commitSha, subdirectoryPath);
     }
 
     /// <summary>
@@ -253,11 +168,14 @@ public static class LoadFromLocalFiles
         string gitDirectory,
         IReadOnlyList<string> subdirectoryPath)
     {
+        ArgumentNullException.ThrowIfNull(subdirectoryPath);
+        using var repository = LocalGitRepository.Open(gitDirectory);
+
         var commitSha =
-            ResolveHead(gitDirectory)
+            repository.ResolveHead()
             ?? throw new InvalidOperationException("Could not resolve HEAD to a commit SHA");
 
-        return LoadSubdirectoryContentsFromCommit(gitDirectory, commitSha, subdirectoryPath);
+        return LoadSubdirectoryContents(repository, commitSha, subdirectoryPath);
     }
 
     /// <summary>
@@ -343,7 +261,11 @@ public static class LoadFromLocalFiles
 
             checkedCandidates.Add(candidate);
 
-            if (Directory.Exists(candidate) && DirectoryContainsAnyFile(candidate))
+            if ((Directory.Exists(candidate) && DirectoryContainsAnyFile(candidate)) ||
+                (File.Exists(candidate) &&
+                File.ReadAllText(candidate).TrimStart().StartsWith(
+                    "gitdir:",
+                    StringComparison.OrdinalIgnoreCase)))
             {
                 return candidate;
             }
@@ -379,251 +301,107 @@ public static class LoadFromLocalFiles
         return Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories).Any();
     }
 
-    /// <summary>
-    /// Creates a lazy object resolver function that parses objects on demand from a local
-    /// .git directory. Instead of loading all objects upfront, it only reads and decompresses
-    /// the specific objects requested via the returned function.
-    /// </summary>
-    /// <remarks>
-    /// The resolver first builds lightweight lookup tables from pack index (.idx) files and
-    /// loose object directory entries. When an object is requested by SHA, it is parsed from
-    /// the pack file or loose storage and cached for future lookups (including delta chain
-    /// resolution).
-    /// </remarks>
-    private static Func<string, PackFile.PackObject?> CreateLazyObjectResolver(string gitDirectory)
+    private static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> MaterializeFiles(
+        LocalGitRepository repository,
+        IEnumerable<GitTreeFile> files)
     {
-        var objectsDir = Path.Combine(gitDirectory, "objects");
+        var materialized =
+            new Dictionary<FilePath, ReadOnlyMemory<byte>>(
+                comparer: Common.EnumerableExtensions.EqualityComparer<FilePath>());
 
-        if (!Directory.Exists(objectsDir))
+        foreach (var file in files)
         {
-            throw new InvalidOperationException($"Not a valid Git directory (missing objects/): {gitDirectory}");
+            materialized[file.Path] = repository.GetRequiredObject(file.ObjectId).Data;
         }
 
-        // Build loose object SHA → file path index (without reading file contents)
-        var looseObjectPaths = new Dictionary<string, string>();
+        return materialized;
+    }
 
-        foreach (var subDir in Directory.EnumerateDirectories(objectsDir))
-        {
-            var dirName = Path.GetFileName(subDir);
+    private static IReadOnlyDictionary<FilePath, ReadOnlyMemory<byte>> LoadSubdirectoryContents(
+        LocalGitRepository repository,
+        string commitSha,
+        IReadOnlyList<string> subdirectoryPath)
+    {
+        var prefix = subdirectoryPath.ToArray();
+        ValidateSubdirectory(repository, commitSha, prefix);
 
-            if (dirName is "pack" or "info")
-                continue;
-
-            if (dirName.Length is not 2)
-                continue;
-
-            foreach (var file in Directory.EnumerateFiles(subDir))
-            {
-                var fileName = Path.GetFileName(file);
-
-                if (fileName.Length is not 38)
-                    continue;
-
-                var sha1Hex = dirName + fileName;
-                looseObjectPaths[sha1Hex] = file;
-            }
-        }
-
-        // Build pack file indexes: SHA → (packFilePath, offset) and per-pack metadata
-        var packDir = Path.Combine(objectsDir, "pack");
-
-        // Each pack is represented by its pre-loaded data and precomputed lookup structures
-        var packInfos =
-            new List<(
-            byte[] SourceArray,
-            Dictionary<string, PackIndex.IndexEntry> EntriesBySHA1,
-            Dictionary<int, int> CompressedRegionEnd)>();
-
-        if (Directory.Exists(packDir))
-        {
-            foreach (var packFile in Directory.EnumerateFiles(packDir, "*.pack"))
-            {
-                var idxFile = Path.ChangeExtension(packFile, ".idx");
-
-                if (!File.Exists(idxFile))
-                    continue;
-
-                var packData = (ReadOnlyMemory<byte>)File.ReadAllBytes(packFile);
-                var idxData = (ReadOnlyMemory<byte>)File.ReadAllBytes(idxFile);
-                var indexEntries = PackIndex.ParsePackIndexV2(idxData);
-
-                var dataWithoutChecksum = packData[..^20];
-                var sourceArray = dataWithoutChecksum.Span.ToArray();
-
-                var entriesBySHA1 = indexEntries.ToDictionary(e => e.SHA1base16, e => e);
-
-                var sortedOffsets = indexEntries.Select(e => (int)e.Offset).OrderBy(o => o).ToArray();
-                var compressedRegionEnd = new Dictionary<int, int>(sortedOffsets.Length);
-
-                for (var i = 0; i < sortedOffsets.Length; i++)
+        var files =
+            repository.EnumerateTree(
+                commitSha,
+                new TreeTraversalOptions
                 {
-                    compressedRegionEnd[sortedOffsets[i]] =
-                        (i + 1 < sortedOffsets.Length)
-                        ?
-                        sortedOffsets[i + 1]
-                        :
-                        sourceArray.Length;
-                }
+                    SelectFile =
+                        file =>
+                            IsPathPrefix(prefix, file.Path) &&
+                            file.Path.Count > prefix.Length
+                            ?
+                            TreeFileSelection.Include
+                            :
+                            TreeFileSelection.Skip,
+                    SelectSubtree =
+                        subtree =>
+                            IsPathPrefix(subtree.Path, prefix) ||
+                            IsPathPrefix(prefix, subtree.Path)
+                            ?
+                            TreeSubtreeSelection.Descend
+                            :
+                            TreeSubtreeSelection.Skip
+                });
 
-                packInfos.Add((sourceArray, entriesBySHA1, compressedRegionEnd));
-            }
+        var materialized =
+            new Dictionary<FilePath, ReadOnlyMemory<byte>>(
+                comparer: Common.EnumerableExtensions.EqualityComparer<FilePath>());
+
+        foreach (var file in files)
+        {
+            materialized[[.. file.Path.Skip(prefix.Length)]] =
+                repository.GetRequiredObject(file.ObjectId).Data;
         }
 
-        // Shared cache for parsed objects (supports delta chain resolution across calls)
-        var cache = new Dictionary<string, PackFile.PackObject>();
+        return materialized;
+    }
 
-        // Per-pack offset cache for delta chain resolution
-        var objectsByOffsetPerPack =
-            packInfos.Select(_ => new Dictionary<long, (PackFile.ObjectType Type, byte[] Data)>()).ToArray();
+    private static void ValidateSubdirectory(
+        LocalGitRepository repository,
+        string commitSha,
+        IReadOnlyList<string> subdirectoryPath)
+    {
+        if (subdirectoryPath.Count is 0)
+            return;
 
+        var commitObject = repository.GetRequiredObject(commitSha);
+
+        if (commitObject.Type is not PackFile.ObjectType.Commit)
+            throw new InvalidOperationException($"Object {commitSha} is not a commit");
+
+        var currentTreeHash = GitObjects.ParseCommit(commitObject.Data).TreeHash;
+
+        foreach (var component in subdirectoryPath)
+        {
+            var treeObject = repository.GetRequiredObject(currentTreeHash);
+
+            if (treeObject.Type is not PackFile.ObjectType.Tree)
+                throw new InvalidOperationException($"Object {currentTreeHash} is not a tree");
+
+            var entry =
+                GitObjects.ParseTree(treeObject.Data).Entries
+                .FirstOrDefault(candidate => candidate.Name == component)
+                ?? throw new InvalidOperationException(
+                    $"Path component '{component}' not found in tree");
+
+            if (entry.Mode is not "40000")
+                throw new InvalidOperationException($"Path component '{component}' is not a directory");
+
+            currentTreeHash = entry.HashBase16;
+        }
+    }
+
+    private static bool IsPathPrefix(
+        IReadOnlyList<string> prefix,
+        IReadOnlyList<string> path)
+    {
         return
-            sha =>
-            {
-                if (cache.TryGetValue(sha, out var cached))
-                {
-                    return cached;
-                }
-
-                // Try pack files first (most objects live in packs)
-                for (var i = 0; i < packInfos.Count; i++)
-                {
-                    var (sourceArray, entriesBySHA1, compressedRegionEnd) = packInfos[i];
-
-                    if (!entriesBySHA1.TryGetValue(sha, out var entry))
-                        continue;
-
-                    var (objectType, data) =
-                        PackFile.ParseObjectAtOffset(
-                            sourceArray,
-                            (int)entry.Offset,
-                            compressedRegionEnd,
-                            entriesBySHA1,
-                            objectsByOffsetPerPack[i]);
-
-                    var packObject = new PackFile.PackObject(objectType, data.Length, data, sha);
-                    cache[sha] = packObject;
-                    return packObject;
-                }
-
-                // Try loose objects
-                if (looseObjectPaths.TryGetValue(sha, out var filePath))
-                {
-                    var compressedData = File.ReadAllBytes(filePath);
-                    var decompressedData = DecompressLooseObject(compressedData);
-                    var packObject = ParseLooseObjectData(decompressedData, sha);
-                    cache[sha] = packObject;
-                    return packObject;
-                }
-
-                return null;
-            };
-    }
-
-    private static IEnumerable<PackFile.PackObject> LoadLooseObjects(string objectsDir)
-    {
-        foreach (var subDir in Directory.EnumerateDirectories(objectsDir))
-        {
-            var dirName = Path.GetFileName(subDir);
-
-            // Skip special directories
-            if (dirName is "pack" or "info")
-                continue;
-
-            // Loose object directories are 2 hex characters
-            if (dirName.Length is not 2)
-                continue;
-
-            foreach (var file in Directory.EnumerateFiles(subDir))
-            {
-                var fileName = Path.GetFileName(file);
-
-                // Loose object files are 38 hex characters
-                if (fileName.Length is not 38)
-                    continue;
-
-                var sha1Hex = dirName + fileName;
-
-                var compressedData = File.ReadAllBytes(file);
-                var decompressedData = DecompressLooseObject(compressedData);
-
-                yield return ParseLooseObjectData(decompressedData, sha1Hex);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Parses a decompressed loose object byte array into a <see cref="PackFile.PackObject"/>.
-    /// The data is expected to have the format: "&lt;type&gt; &lt;size&gt;\0&lt;content&gt;".
-    /// </summary>
-    private static PackFile.PackObject ParseLooseObjectData(byte[] decompressedData, string sha1Hex)
-    {
-        var nullIndex = Array.IndexOf(decompressedData, (byte)0);
-
-        if (nullIndex < 0)
-        {
-            throw new InvalidOperationException($"Invalid loose object format for {sha1Hex}");
-        }
-
-        var header = Encoding.UTF8.GetString(decompressedData, 0, nullIndex);
-        var spaceIndex = header.IndexOf(' ');
-
-        if (spaceIndex < 0)
-        {
-            throw new InvalidOperationException($"Invalid loose object header for {sha1Hex}: {header}");
-        }
-
-        var typeStr = header[..spaceIndex];
-        var content = decompressedData.AsMemory()[(nullIndex + 1)..];
-
-        var objectType =
-            typeStr switch
-            {
-                "commit" => PackFile.ObjectType.Commit,
-                "tree" => PackFile.ObjectType.Tree,
-                "blob" => PackFile.ObjectType.Blob,
-                "tag" => PackFile.ObjectType.Tag,
-
-                _ =>
-                throw new InvalidOperationException($"Unknown object type: {typeStr}")
-            };
-
-        return new PackFile.PackObject(objectType, content.Length, content, sha1Hex);
-    }
-
-    private static byte[] DecompressLooseObject(byte[] compressedData)
-    {
-        using var inputStream = new MemoryStream(compressedData);
-        using var zlibStream = new ZLibStream(inputStream, CompressionMode.Decompress);
-        using var outputStream = new MemoryStream();
-
-        zlibStream.CopyTo(outputStream);
-
-        return outputStream.ToArray();
-    }
-
-    private static string? ResolveFromPackedRefs(string gitDirectory, string reference)
-    {
-        var packedRefsPath = Path.Combine(gitDirectory, "packed-refs");
-
-        if (!File.Exists(packedRefsPath))
-        {
-            return null;
-        }
-
-        foreach (var line in File.ReadAllLines(packedRefsPath))
-        {
-            // Skip comments and peeled refs
-            if (line.StartsWith('#') || line.StartsWith('^'))
-                continue;
-
-            var parts = line.Split(' ', 2);
-
-            if (parts.Length is 2 && parts[1] == reference)
-            {
-                return parts[0];
-            }
-        }
-
-        return null;
+            prefix.Count <= path.Count &&
+            prefix.Select((component, index) => component == path[index]).All(matches => matches);
     }
 }

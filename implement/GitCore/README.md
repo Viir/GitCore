@@ -11,6 +11,9 @@ Pure managed C# implementation for reading from Git repositories.
   + Load all files from any commit's tree.
   + Load files from a specific subdirectory within a commit's tree.
   + Supports both loose objects and pack files.
+  + Reads indexed packs with 64-bit offsets without loading complete packs.
+  + Supports worktrees, bare repositories, linked worktrees, and alternate object stores.
+  + Incremental tree traversal with early file and subtree pruning.
 + Cloning via [Git Smart HTTP](https://git-scm.com/book/en/v2/Git-on-the-Server-Smart-HTTP)
   + Efficient partial cloning of subdirectories.
   + Configurable API for caching git objects to make cloning more efficient.
@@ -55,6 +58,55 @@ var branchSha = GitCore.LoadFromLocalFiles.ResolveReference(gitDir, "refs/heads/
 var repository = GitCore.LoadFromLocalFiles.LoadRepository(gitDir);
 ```
 
+### Incrementally traverse a local repository
+
+`LocalGitRepository` owns pack handles and bounded caches, so keep it open while resolving related
+objects and dispose it afterward. Selection runs before a subtree or blob is loaded.
+
+```csharp
+using var repository =
+    GitCore.LocalGitRepository.Open(
+        repoRootDir,
+        new GitCore.LocalRepositoryOptions
+        {
+            MaximumCachedObjectBytes = 128 * 1024 * 1024,
+            MaximumMaterializedObjectSize = 64 * 1024 * 1024
+        });
+
+var commitId =
+    repository.ResolveHead()
+    ?? throw new InvalidOperationException("HEAD cannot be resolved.");
+
+await foreach (
+    var file in repository.EnumerateTreeAsync(
+        commitId,
+        new GitCore.TreeTraversalOptions
+        {
+            SelectFile =
+                file =>
+                    file.Name is ".order" ||
+                    file.Name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                        ? GitCore.TreeFileSelection.Include
+                        : GitCore.TreeFileSelection.Skip,
+            SelectSubtree =
+                subtree =>
+                    subtree.Path.Contains(".attachments", StringComparer.OrdinalIgnoreCase)
+                        ? GitCore.TreeSubtreeSelection.Skip
+                        : GitCore.TreeSubtreeSelection.Descend
+        }))
+{
+    await using var destination = CreateDestination(file.Path);
+    await file.CopyContentToAsync(destination);
+}
+```
+
+`LookupObject` returns `Found`, `Missing`, or `MissingPromised` together with a typed,
+context-rich error. GitCore never fetches a missing object implicitly. Applications can opt into
+`FetchMissing` or `Custom` and supply a `MissingObjectProvider`, retaining control of networking,
+credentials, cancellation, and persistence. Storage and limit failures use typed exceptions such
+as `GitObjectNotFoundException`, `InvalidPackIndexException`, `InvalidPackObjectException`,
+`GitObjectSizeLimitException`, and `GitResourceLimitException`; each exposes a `GitErrorContext`.
+
 ### Load files from a remote Git repository
 
 ```csharp
@@ -64,4 +116,3 @@ var subdirectoryContents =
         commitSha: "c837c8199f38aab839c40019a50055e16d100c74",
         subdirectoryPath: ["guide"]);
 ```
-

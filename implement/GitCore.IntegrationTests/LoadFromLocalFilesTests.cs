@@ -75,14 +75,9 @@ public class ClonedRepositoryFixture : IDisposable
     }
 }
 
-public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
+public class LoadFromLocalFilesTests(ClonedRepositoryFixture fixture) : IClassFixture<ClonedRepositoryFixture>
 {
-    private readonly ClonedRepositoryFixture _fixture;
-
-    public LoadFromLocalFilesTests(ClonedRepositoryFixture fixture)
-    {
-        _fixture = fixture;
-    }
+    private readonly ClonedRepositoryFixture _fixture = fixture;
 
     /// <summary>
     /// Runs a git command and returns the trimmed stdout.
@@ -422,7 +417,7 @@ public class LoadFromLocalFilesTests : IClassFixture<ClonedRepositoryFixture>
                 kvp.Key[0] == "implement" &&
                 kvp.Key[1] == "GitCore")
             {
-                filteredFiles[(IReadOnlyList<string>)kvp.Key.Skip(2).ToArray()] = kvp.Value;
+                filteredFiles[(IReadOnlyList<string>)[.. kvp.Key.Skip(2)]] = kvp.Value;
             }
         }
 

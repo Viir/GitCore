@@ -28,105 +28,188 @@ public static class PackIndex
     /// <returns>
     /// A read-only list of <see cref="IndexEntry"/> values, sorted by increasing <see cref="IndexEntry.Offset"/>.
     /// </returns>
-    /// <exception cref="ArgumentException">
-    /// Thrown when the signature is invalid or the version is not2.
-    /// </exception>
+    /// <exception cref="InvalidPackIndexException">Thrown when the index is malformed or unsupported.</exception>
     public static IReadOnlyList<IndexEntry> ParsePackIndexV2(ReadOnlyMemory<byte> indexData)
     {
+        return ParsePackIndexV2(indexData, indexPath: null);
+    }
+
+    /// <summary>
+    /// Parses a Git pack index version 2 file and associates failures with its storage path.
+    /// </summary>
+    public static IReadOnlyList<IndexEntry> ParsePackIndexV2(
+        ReadOnlyMemory<byte> indexData,
+        string? indexPath)
+    {
+        var indexLength = indexData.Length;
+
+        uint? detectedVersion =
+            indexLength >= 8
+            ?
+            BinaryPrimitives.ReadUInt32BigEndian(indexData.Span.Slice(4, 4))
+            :
+            null;
+
         var span = indexData.Span;
 
-        // Check magic number (0xFF, 't', 'O', 'c')
-        ReadOnlySpan<byte> expectedSignature = [0xFF, (byte)'t', (byte)'O', (byte)'c'];
-
-        if (!span[..4].SequenceEqual(expectedSignature))
+        InvalidPackIndexException Invalid(string message, Exception? innerException = null)
         {
-            throw new ArgumentException("Invalid pack index signature");
+            return
+                new InvalidPackIndexException(
+                    message,
+                    new GitErrorContext(
+                        "ParsePackIndexV2",
+                        IndexPath: indexPath,
+                        IndexVersion: detectedVersion,
+                        ObservedValue: indexLength),
+                    innerException);
         }
 
-        // Check version
-        var version = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
-
-        if (version is not 2)
+        try
         {
-            throw new ArgumentException($"Unsupported pack index version: {version}");
-        }
+            const int HeaderAndFanoutLength = 8 + (256 * 4);
+            const int TrailerLength = 40;
 
-        // Read fanout table (256 entries of 4 bytes each = 1024 bytes)
-        var fanoutOffset = 8;
-        var objectCount = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(fanoutOffset + 255 * 4, 4));
+            if (span.Length < HeaderAndFanoutLength + TrailerLength)
+                throw Invalid($"Pack index is truncated ({span.Length} bytes).");
 
-        // SHA-1 table starts after fanout (256 * 4 bytes)
-        var sha1TableOffset = fanoutOffset + 256 * 4;
+            ReadOnlySpan<byte> expectedSignature = [0xFF, (byte)'t', (byte)'O', (byte)'c'];
 
-        // CRC table starts after SHA-1 table (objectCount * 20 bytes)
-        var crcTableOffset = sha1TableOffset + (int)objectCount * 20;
+            if (!span[..4].SequenceEqual(expectedSignature))
+                throw Invalid("Invalid pack index signature.");
 
-        // Offset table starts after CRC table (objectCount * 4 bytes)
-        var offsetTableOffset = crcTableOffset + (int)objectCount * 4;
+            var version = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
 
-        // Large-offset table starts after the 32-bit offset table
-        var largeOffsetTableOffset = offsetTableOffset + (int)objectCount * 4;
-        var largeOffsetCount = 0;
+            if (version is not 2)
+                throw Invalid($"Unsupported pack index version: {version}.");
 
-        for (var i = 0; i < objectCount; i++)
-        {
-            var offsetValue = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offsetTableOffset + i * 4, 4));
+            var fanoutOffset = 8;
+            uint previousFanout = 0;
 
-            if ((offsetValue & 0x80000000u) is not 0)
+            for (var index = 0; index < 256; index++)
             {
-                largeOffsetCount++;
+                var fanout =
+                    BinaryPrimitives.ReadUInt32BigEndian(
+                        span.Slice(fanoutOffset + index * 4, 4));
+
+                if (fanout < previousFanout)
+                    throw Invalid($"Pack index fanout table decreases at entry {index}.");
+
+                previousFanout = fanout;
             }
-        }
 
-        var entries = new List<IndexEntry>();
+            var objectCountValue = previousFanout;
 
-        for (var i = 0; i < objectCount; i++)
-        {
-            // Read SHA-1 (20 bytes)
-            var sha1Bytes = span.Slice(sha1TableOffset + i * 20, 20);
-            var sha1 = Convert.ToHexStringLower(sha1Bytes);
+            if (objectCountValue > int.MaxValue)
+                throw Invalid($"Pack index object count {objectCountValue} exceeds the supported limit.");
 
-            // Read CRC32 (4 bytes, big-endian)
-            var crc32 = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(crcTableOffset + i * 4, 4));
+            var objectCount = (int)objectCountValue;
+            var sha1TableOffset = (long)HeaderAndFanoutLength;
+            var crcTableOffset = checked(sha1TableOffset + objectCount * 20L);
+            var offsetTableOffset = checked(crcTableOffset + objectCount * 4L);
+            var largeOffsetTableOffset = checked(offsetTableOffset + objectCount * 4L);
 
-            // Read offset (4 bytes, big-endian)
-            // MSB indicates if this is a 64-bit offset
-            var offsetValue = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(offsetTableOffset + i * 4, 4));
-            long offset;
+            if (largeOffsetTableOffset + TrailerLength > span.Length)
+                throw Invalid("Pack index tables extend beyond the available data.");
 
-            if ((offsetValue & 0x80000000u) is not 0)
+            var largeOffsetCount = 0;
+
+            for (var index = 0; index < objectCount; index++)
             {
-                var largeOffsetIndex = offsetValue & 0x7FFFFFFFu;
+                var offsetValue =
+                    BinaryPrimitives.ReadUInt32BigEndian(
+                        span.Slice(checked((int)(offsetTableOffset + index * 4L)), 4));
 
-                if (largeOffsetIndex >= largeOffsetCount)
+                if ((offsetValue & 0x80000000u) is not 0)
                 {
-                    throw new ArgumentException($"Large-offset table index is out of range: {largeOffsetIndex}");
+                    var referencedIndex = offsetValue & 0x7FFFFFFFu;
+
+                    if (referencedIndex != largeOffsetCount)
+                    {
+                        throw Invalid(
+                            $"Large-offset table index {referencedIndex} is inconsistent; " +
+                            $"expected {largeOffsetCount}.");
+                    }
+
+                    largeOffsetCount++;
+                }
+            }
+
+            var expectedLength =
+                checked(largeOffsetTableOffset + largeOffsetCount * 8L + TrailerLength);
+
+            if (expectedLength != span.Length)
+            {
+                throw Invalid(
+                    $"Pack index length is {span.Length}, but its tables require {expectedLength} bytes.");
+            }
+
+            var calculatedChecksum = System.Security.Cryptography.SHA1.HashData(span[..^20]);
+
+            if (!span[^20..].SequenceEqual(calculatedChecksum))
+                throw Invalid("Pack index checksum does not match its content.");
+
+            var entries = new List<IndexEntry>(objectCount);
+
+            for (var index = 0; index < objectCount; index++)
+            {
+                var sha1Bytes =
+                    span.Slice(checked((int)(sha1TableOffset + index * 20L)), 20);
+
+                var sha1 = Convert.ToHexStringLower(sha1Bytes);
+
+                var crc32 =
+                    BinaryPrimitives.ReadUInt32BigEndian(
+                        span.Slice(checked((int)(crcTableOffset + index * 4L)), 4));
+
+                var offsetValue =
+                    BinaryPrimitives.ReadUInt32BigEndian(
+                        span.Slice(checked((int)(offsetTableOffset + index * 4L)), 4));
+
+                long offset;
+
+                if ((offsetValue & 0x80000000u) is not 0)
+                {
+                    var largeOffsetIndex = offsetValue & 0x7FFFFFFFu;
+
+                    if (largeOffsetIndex >= largeOffsetCount)
+                    {
+                        throw Invalid(
+                            $"Large-offset table index {largeOffsetIndex} is out of range " +
+                            $"for {largeOffsetCount} entries.");
+                    }
+
+                    var largeOffsetPosition =
+                        checked(largeOffsetTableOffset + largeOffsetIndex * 8L);
+
+                    var largeOffsetValue =
+                        BinaryPrimitives.ReadUInt64BigEndian(
+                            span.Slice(checked((int)largeOffsetPosition), 8));
+
+                    if (largeOffsetValue > long.MaxValue)
+                        throw Invalid($"Pack offset {largeOffsetValue} exceeds Int64.");
+
+                    offset = (long)largeOffsetValue;
+                }
+                else
+                {
+                    offset = offsetValue;
                 }
 
-                var largeOffsetPosition = largeOffsetTableOffset + largeOffsetIndex * 8L;
-
-                var largeOffsetValue =
-                    BinaryPrimitives.ReadUInt64BigEndian(span.Slice((int)largeOffsetPosition, 8));
-
-                if (largeOffsetValue > long.MaxValue)
-                {
-                    throw new ArgumentException($"Pack offset is too large: {largeOffsetValue}");
-                }
-
-                offset = (long)largeOffsetValue;
-            }
-            else
-            {
-                offset = offsetValue;
+                entries.Add(new IndexEntry(offset, sha1, crc32));
             }
 
-            entries.Add(new IndexEntry(offset, sha1, crc32));
+            entries.Sort((left, right) => left.Offset.CompareTo(right.Offset));
+            return entries;
         }
-
-        // Sort by offset to make it easier to determine object sizes
-        entries.Sort((a, b) => a.Offset.CompareTo(b.Offset));
-
-        return entries;
+        catch (InvalidPackIndexException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw Invalid("Pack index is malformed.", exception);
+        }
     }
 
     /// <summary>
