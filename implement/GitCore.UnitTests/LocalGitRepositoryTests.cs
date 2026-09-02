@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -166,30 +167,30 @@ public class LocalGitRepositoryTests
                 new TreeTraversalOptions
                 {
                     SelectFile =
-                        file =>
-                        {
-                            file.ObjectId.Should().Be(includedId);
-                            file.Mode.Should().Be("100644");
+                    file =>
+                    {
+                        file.ObjectId.Should().Be(includedId);
+                        file.Mode.Should().Be("100644");
 
-                            return
+                        return
                             file.Name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
                             ?
                             TreeFileSelection.Include
                             :
                             TreeFileSelection.Skip;
-                        },
+                    },
                     SelectSubtree =
-                        subtree =>
-                        {
-                            subtree.ObjectId.Should().Be(missingTreeId);
+                    subtree =>
+                    {
+                        subtree.ObjectId.Should().Be(missingTreeId);
 
-                            return
+                        return
                             subtree.Path.Contains(".attachments", StringComparer.OrdinalIgnoreCase)
                             ?
                             TreeSubtreeSelection.Skip
                             :
                             TreeSubtreeSelection.Descend;
-                        }
+                    }
                 });
 
         await using var enumerator = files.GetAsyncEnumerator();
@@ -246,8 +247,8 @@ public class LocalGitRepositoryTests
             new TreeTraversalOptions
             {
                 SelectFile =
-                    TreeTraversalOptions.CreateFileSelector(
-                        path => path[^1].EndsWith(".md", StringComparison.Ordinal)),
+                TreeTraversalOptions.CreateFileSelector(
+                    path => path[^1].EndsWith(".md", StringComparison.Ordinal)),
                 MaximumTreeDepth = 1
             };
 
@@ -257,32 +258,32 @@ public class LocalGitRepositoryTests
                 "readme.txt",
                 new string('c', 40),
                 "100644"))
-        .Should()
-        .Be(TreeFileSelection.Skip);
+            .Should()
+            .Be(TreeFileSelection.Skip);
     }
 
     [Fact]
     public void Opens_linked_worktrees_and_resolves_shared_references()
     {
         using var temporary = new TemporaryRepository();
-        var worktree = System.IO.Path.Combine(temporary.RootDirectory, "worktree");
+        var worktree = Path.Combine(temporary.RootDirectory, "worktree");
 
         var worktreeGitDirectory =
-            System.IO.Path.Combine(temporary.Path, "worktrees", "linked");
+            Path.Combine(temporary.Path, "worktrees", "linked");
 
         Directory.CreateDirectory(worktree);
         Directory.CreateDirectory(worktreeGitDirectory);
-        Directory.CreateDirectory(System.IO.Path.Combine(temporary.Path, "refs", "heads"));
-        File.WriteAllText(System.IO.Path.Combine(worktree, ".git"), $"gitdir: {worktreeGitDirectory}");
-        File.WriteAllText(System.IO.Path.Combine(worktreeGitDirectory, "commondir"), "../..");
-        File.WriteAllText(System.IO.Path.Combine(worktreeGitDirectory, "HEAD"), "ref: refs/heads/main");
+        Directory.CreateDirectory(Path.Combine(temporary.Path, "refs", "heads"));
+        File.WriteAllText(Path.Combine(worktree, ".git"), $"gitdir: {worktreeGitDirectory}");
+        File.WriteAllText(Path.Combine(worktreeGitDirectory, "commondir"), "../..");
+        File.WriteAllText(Path.Combine(worktreeGitDirectory, "HEAD"), "ref: refs/heads/main");
         var commitId = new string('b', 40);
-        File.WriteAllText(System.IO.Path.Combine(temporary.Path, "refs", "heads", "main"), commitId);
+        File.WriteAllText(Path.Combine(temporary.Path, "refs", "heads", "main"), commitId);
 
         using var repository = LocalGitRepository.Open(worktree);
 
-        repository.GitDirectory.Should().Be(System.IO.Path.GetFullPath(worktreeGitDirectory));
-        repository.CommonGitDirectory.Should().Be(System.IO.Path.GetFullPath(temporary.Path));
+        repository.GitDirectory.Should().Be(Path.GetFullPath(worktreeGitDirectory));
+        repository.CommonGitDirectory.Should().Be(Path.GetFullPath(temporary.Path));
         repository.ResolveHead().Should().Be(commitId);
     }
 
@@ -293,11 +294,11 @@ public class LocalGitRepositoryTests
         using var alternate = new TemporaryRepository();
         var content = "from alternate"u8.ToArray();
         var objectId = WriteLooseObject(alternate.ObjectsDirectory, PackFile.ObjectType.Blob, content);
-        var infoDirectory = System.IO.Path.Combine(primary.ObjectsDirectory, "info");
+        var infoDirectory = Path.Combine(primary.ObjectsDirectory, "info");
         Directory.CreateDirectory(infoDirectory);
 
         File.WriteAllText(
-            System.IO.Path.Combine(infoDirectory, "alternates"),
+            Path.Combine(infoDirectory, "alternates"),
             alternate.ObjectsDirectory);
 
         using var repository = LocalGitRepository.Open(primary.Path);
@@ -312,7 +313,7 @@ public class LocalGitRepositoryTests
         using var temporary = new TemporaryRepository();
 
         File.WriteAllText(
-            System.IO.Path.Combine(temporary.Path, "config"),
+            Path.Combine(temporary.Path, "config"),
             """
             [extensions]
                 partialClone = origin
@@ -470,29 +471,50 @@ public class LocalGitRepositoryTests
     {
         using var temporary = new TemporaryRepository();
         var commitId = new string('1', 40);
-        var refsDirectory = System.IO.Path.Combine(temporary.Path, "refs", "heads");
+        var refsDirectory = Path.Combine(temporary.Path, "refs", "heads");
         Directory.CreateDirectory(refsDirectory);
-        File.WriteAllText(System.IO.Path.Combine(refsDirectory, "main"), commitId);
-        File.WriteAllBytes(System.IO.Path.Combine(temporary.PackDirectory, "unindexed.pack"), [1, 2, 3]);
+        File.WriteAllText(Path.Combine(refsDirectory, "main"), commitId);
+        File.WriteAllBytes(Path.Combine(temporary.PackDirectory, "unindexed.pack"), [1, 2, 3]);
 
         LoadFromLocalFiles.ResolveHead(temporary.Path).Should().Be(commitId);
     }
 
     [Fact]
-    public void Opening_fails_explicitly_for_an_unindexed_pack()
+    public void Opening_ignores_an_unindexed_pack()
     {
         using var temporary = new TemporaryRepository();
-        var packPath = System.IO.Path.Combine(temporary.PackDirectory, "unindexed.pack");
+
+        File.WriteAllBytes(
+            Path.Combine(temporary.PackDirectory, "unindexed.pack"),
+            [1, 2, 3]);
+
+        using var repository = LocalGitRepository.Open(temporary.Path);
+
+        repository.ObjectIds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Opening_accepts_an_unindexed_standard_pack_like_git()
+    {
+        using var temporary = new TemporaryRepository();
+
+        var packPath =
+            Path.Combine(
+                temporary.PackDirectory,
+                "pack-02963ffee9e3587173a0338b4288014b7ecc26b1.pack");
+
         File.WriteAllBytes(packPath, [1, 2, 3]);
 
-        var exception =
-            ((Action)(() => LocalGitRepository.Open(temporary.Path)))
-            .Should()
-            .Throw<InvalidPackIndexException>()
-            .Which;
+        var git =
+            RunGit(
+                temporary.RootDirectory,
+                ["--git-dir", temporary.Path, "fsck", "--no-dangling"]);
 
-        exception.Context.PackPath.Should().Be(packPath);
-        exception.Message.Should().Contain("no companion index");
+        git.ExitCode.Should().Be(0, git.StandardError);
+
+        using var repository = LocalGitRepository.Open(temporary.Path);
+
+        repository.ObjectIds.Should().BeEmpty();
     }
 
     [Fact]
@@ -508,7 +530,7 @@ public class LocalGitRepositoryTests
             [EncodeRegularObject(PackFile.ObjectType.Blob, content)],
             [(objectId, 12)]);
 
-        var packPath = System.IO.Path.Combine(temporary.PackDirectory, "pack-checksum.pack");
+        var packPath = Path.Combine(temporary.PackDirectory, "pack-checksum.pack");
 
         using (var pack = new FileStream(packPath, FileMode.Open, FileAccess.Write))
         {
@@ -643,7 +665,7 @@ public class LocalGitRepositoryTests
         IReadOnlyList<byte[]> objects,
         IReadOnlyList<(string ObjectId, long Offset)> entries)
     {
-        var packPath = System.IO.Path.Combine(packDirectory, name + ".pack");
+        var packPath = Path.Combine(packDirectory, name + ".pack");
 
         using (var pack = new FileStream(packPath, FileMode.CreateNew, FileAccess.Write))
         {
@@ -656,7 +678,7 @@ public class LocalGitRepositoryTests
         }
 
         File.WriteAllBytes(
-            System.IO.Path.ChangeExtension(packPath, ".idx"),
+            Path.ChangeExtension(packPath, ".idx"),
             BuildPackIndex(entries));
     }
 
@@ -749,11 +771,11 @@ public class LocalGitRepositoryTests
         var looseContent = new byte[header.Length + content.Length];
         header.CopyTo(looseContent, 0);
         content.CopyTo(looseContent, header.Length);
-        var objectDirectory = System.IO.Path.Combine(objectsDirectory, objectId[..2]);
+        var objectDirectory = Path.Combine(objectsDirectory, objectId[..2]);
         Directory.CreateDirectory(objectDirectory);
 
         File.WriteAllBytes(
-            System.IO.Path.Combine(objectDirectory, objectId[2..]),
+            Path.Combine(objectDirectory, objectId[2..]),
             Compress(looseContent));
 
         return objectId;
@@ -801,6 +823,32 @@ public class LocalGitRepositoryTests
         return objectType.ToString().ToLowerInvariant();
     }
 
+    private static (int ExitCode, string StandardError) RunGit(
+        string workingDirectory,
+        IReadOnlyList<string> arguments)
+    {
+        var startInfo =
+            new ProcessStartInfo
+            {
+                FileName = "git",
+                WorkingDirectory = workingDirectory,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+
+        using var process =
+            Process.Start(startInfo)
+            ?? throw new InvalidOperationException("Failed to start git process.");
+
+        var standardError = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return (process.ExitCode, standardError);
+    }
+
     private sealed class TemporaryRepository : IDisposable
     {
         public TemporaryRepository()
@@ -814,6 +862,7 @@ public class LocalGitRepositoryTests
             ObjectsDirectory = System.IO.Path.Combine(Path, "objects");
             PackDirectory = System.IO.Path.Combine(ObjectsDirectory, "pack");
             Directory.CreateDirectory(PackDirectory);
+            Directory.CreateDirectory(System.IO.Path.Combine(Path, "refs"));
             File.WriteAllText(System.IO.Path.Combine(Path, "HEAD"), "ref: refs/heads/main");
         }
 

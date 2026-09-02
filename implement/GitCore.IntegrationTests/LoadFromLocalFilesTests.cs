@@ -409,7 +409,7 @@ public class LoadFromLocalFilesTests(ClonedRepositoryFixture fixture) : IClassFi
 
         var filteredFiles =
             new Dictionary<IReadOnlyList<string>, ReadOnlyMemory<byte>>(
-                comparer: GitCore.Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
+                comparer: Common.EnumerableExtensions.EqualityComparer<IReadOnlyList<string>>());
 
         foreach (var kvp in allFiles)
         {

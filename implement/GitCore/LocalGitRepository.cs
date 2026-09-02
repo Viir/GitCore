@@ -665,23 +665,6 @@ public sealed class LocalGitRepository : IGitObjectDatabase
         if (!Directory.Exists(packDirectory))
             return;
 
-        foreach (var packPath in Directory.EnumerateFiles(packDirectory, "*.pack"))
-        {
-            var indexPath = Path.ChangeExtension(packPath, ".idx");
-
-            if (!File.Exists(indexPath))
-            {
-                throw new InvalidPackIndexException(
-                    $"Pack file {packPath} has no companion index at {indexPath}; " +
-                    "random-access loading requires an index.",
-                    CreateErrorContext(
-                        "Open",
-                        packPath: packPath,
-                        packLength: new FileInfo(packPath).Length,
-                        indexPath: indexPath));
-            }
-        }
-
         foreach (var indexPath in Directory.EnumerateFiles(packDirectory, "*.idx").Order(StringComparer.Ordinal))
         {
             var packPath = Path.ChangeExtension(indexPath, ".pack");
