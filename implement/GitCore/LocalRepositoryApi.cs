@@ -484,11 +484,11 @@ public sealed class TreeTraversalOptions
 
         return
             file =>
-                shouldIncludeFile(file.Path)
-                ?
-                TreeFileSelection.Include
-                :
-                TreeFileSelection.Skip;
+            shouldIncludeFile(file.Path)
+            ?
+            TreeFileSelection.Include
+            :
+            TreeFileSelection.Skip;
     }
 
     /// <summary>
@@ -501,11 +501,11 @@ public sealed class TreeTraversalOptions
 
         return
             subtree =>
-                shouldDescend(subtree.Path)
-                ?
-                TreeSubtreeSelection.Descend
-                :
-                TreeSubtreeSelection.Skip;
+            shouldDescend(subtree.Path)
+            ?
+            TreeSubtreeSelection.Descend
+            :
+            TreeSubtreeSelection.Skip;
     }
 
     /// <summary>
@@ -519,17 +519,17 @@ public sealed class TreeTraversalOptions
             new TreeTraversalOptions
             {
                 SelectFile =
-                    shouldIncludeFile is null
-                    ?
-                    null
-                    :
-                    CreateFileSelector(shouldIncludeFile),
+                shouldIncludeFile is null
+                ?
+                null
+                :
+                CreateFileSelector(shouldIncludeFile),
                 SelectSubtree =
-                    shouldDescend is null
-                    ?
-                    null
-                    :
-                    CreateSubtreeSelector(shouldDescend)
+                shouldDescend is null
+                ?
+                null
+                :
+                CreateSubtreeSelector(shouldDescend)
             };
     }
 

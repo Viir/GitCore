@@ -159,7 +159,8 @@ public static class PackFile
                 // Get base object
                 if (!objectsByOffset.TryGetValue(baseOffset, out var baseObj))
                 {
-                    throw new InvalidOperationException($"Base object at offset {baseOffset} not found for OfsDelta at {startOffset}");
+                    throw new InvalidOperationException(
+                        $"Base object at offset {baseOffset} not found for OfsDelta at {startOffset}");
                 }
 
                 // Decompress delta data
@@ -665,7 +666,8 @@ public static class PackFile
 
         if (resultOffset != resultSize)
         {
-            throw new InvalidOperationException($"Delta reconstruction size mismatch: expected {resultSize}, got {resultOffset}");
+            throw new InvalidOperationException(
+                $"Delta reconstruction size mismatch: expected {resultSize}, got {resultOffset}");
         }
 
         return result;

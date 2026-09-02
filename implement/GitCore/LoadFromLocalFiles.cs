@@ -331,21 +331,21 @@ public static class LoadFromLocalFiles
                 new TreeTraversalOptions
                 {
                     SelectFile =
-                        file =>
-                            IsPathPrefix(prefix, file.Path) &&
-                            file.Path.Count > prefix.Length
-                            ?
-                            TreeFileSelection.Include
-                            :
-                            TreeFileSelection.Skip,
+                    file =>
+                    IsPathPrefix(prefix, file.Path) &&
+                    file.Path.Count > prefix.Length
+                    ?
+                    TreeFileSelection.Include
+                    :
+                    TreeFileSelection.Skip,
                     SelectSubtree =
-                        subtree =>
-                            IsPathPrefix(subtree.Path, prefix) ||
-                            IsPathPrefix(prefix, subtree.Path)
-                            ?
-                            TreeSubtreeSelection.Descend
-                            :
-                            TreeSubtreeSelection.Skip
+                    subtree =>
+                    IsPathPrefix(subtree.Path, prefix) ||
+                    IsPathPrefix(prefix, subtree.Path)
+                    ?
+                    TreeSubtreeSelection.Descend
+                    :
+                    TreeSubtreeSelection.Skip
                 });
 
         var materialized =
