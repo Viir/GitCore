@@ -915,7 +915,7 @@ public sealed class LocalGitRepository : IGitObjectDatabase
             if (!_locations.TryGetValue(objectId, out var location))
                 return null;
 
-            GitObject gitObject =
+            var gitObject =
                 location switch
                 {
                     LooseObjectLocation loose => ReadLooseObject(objectId, loose, cancellationToken),
