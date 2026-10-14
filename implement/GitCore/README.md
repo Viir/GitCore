@@ -203,6 +203,9 @@ Split indexes are resolved through the injected filesystem (`GitIndex.Parse` acc
 a shared-index resolver). SHA-1 and SHA-256 indexes are supported. Sparse-directory
 entries are exposed, but queries beneath an unexpanded sparse-index directory throw
 `NotSupportedException`; use a full index for those paths.
+String APIs use UTF-8 Git paths and ignore/config files; malformed UTF-8 input fails
+explicitly. Ignore-pattern case folding and POSIX character classes follow Git's
+ASCII byte semantics rather than culture-sensitive text matching.
 
 All working-tree filesystem and environment access goes through `IGitFileSystem`.
 Pass a custom implementation to `Open` or `Discover` for in-memory tests; the default

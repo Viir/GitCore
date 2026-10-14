@@ -16,12 +16,14 @@ public sealed class GitIndex
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
     private readonly HashSet<string> paths;
     private readonly HashSet<string> pathsIgnoringCase;
+    private readonly string[] sparseDirectoryPaths;
 
     private GitIndex(List<GitIndexEntry> entries)
     {
         Entries = entries.AsReadOnly();
         paths = new HashSet<string>(entries.Select(entry => entry.Path), StringComparer.Ordinal);
         pathsIgnoringCase = new HashSet<string>(entries.Select(entry => entry.Path), StringComparer.OrdinalIgnoreCase);
+        sparseDirectoryPaths = entries.Where(entry => entry.IsSparseDirectory).Select(entry => entry.Path).ToArray();
     }
 
     /// <summary>
@@ -73,10 +75,10 @@ public sealed class GitIndex
 
         var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-        foreach (var entry in Entries)
+        foreach (var sparseDirectoryPath in sparseDirectoryPaths)
         {
-            if (entry.IsSparseDirectory && relativePath.StartsWith(entry.Path, comparison))
-                throw new NotSupportedException($"Tracking below sparse index directory '{entry.Path}' requires expanding its tree.");
+            if (relativePath.StartsWith(sparseDirectoryPath, comparison))
+                throw new NotSupportedException($"Tracking below sparse index directory '{sparseDirectoryPath}' requires expanding its tree.");
         }
 
         return false;

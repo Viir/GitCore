@@ -21,6 +21,7 @@ public class GitWorkingTreeTests
     [InlineData("src", false)]
     [InlineData(".git/config", false)]
     [InlineData("nested/file.cs", false)]
+    [InlineData("submodule/file.cs", false)]
     [InlineData("link.cs", false)]
     [InlineData("linkdir/file.cs", false)]
     public void Working_tree_selects_only_regular_tracked_or_unignored_files(string path, bool expected)
@@ -35,6 +36,8 @@ public class GitWorkingTreeTests
         storage.AddFile("/repo/.git/config", "");
         storage.AddFile("/repo/nested/.git/HEAD", "");
         storage.AddFile("/repo/nested/file.cs", "");
+        storage.AddFile("/repo/submodule/.git", "gitdir: ../.git/modules/submodule\n");
+        storage.AddFile("/repo/submodule/file.cs", "");
         storage.AddLink("/repo/link.cs");
         storage.AddFile("/repo/linkdir/file.cs", "");
         storage.AddLink("/repo/linkdir");
