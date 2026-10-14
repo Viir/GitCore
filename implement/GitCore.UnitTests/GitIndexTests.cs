@@ -46,6 +46,22 @@ public class GitIndexTests
     }
 
     [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void Index_ignore_case_folds_ascii_but_preserves_distinct_unicode_paths(int version)
+    {
+        var index = GitIndex.Parse(BuildIndex(version, [new("ASCII.TXT"), new("É.TXT")]));
+
+        index.IsTracked("ascii.txt").Should().BeFalse();
+        index.IsTracked("ascii.txt", ignoreCase: true).Should().BeTrue();
+        index.IsTracked("É.txt").Should().BeFalse();
+        index.IsTracked("É.txt", ignoreCase: true).Should().BeTrue();
+        index.IsTracked("é.TXT", ignoreCase: true).Should().BeFalse();
+        index.IsTracked("é.txt", ignoreCase: true).Should().BeFalse();
+    }
+
+    [Theory]
     [InlineData(3)]
     [InlineData(4)]
     public void Index_tracks_skip_worktree_and_intent_to_add(int version)
@@ -162,6 +178,24 @@ public class GitIndexTests
         index.IsTracked("SPARSE/file").Should().BeFalse();
         Throws<NotSupportedException>(() => index.IsTracked("sparse/file"));
         Throws<NotSupportedException>(() => index.IsTracked("SPARSE/file", ignoreCase: true));
+    }
+
+    [Fact]
+    public void Index_sparse_directory_prefixes_fold_ascii_but_preserve_distinct_unicode_paths()
+    {
+        var index = GitIndex.Parse(BuildIndex(3,
+        [
+            new("ASCII/", Mode: 0x4000, ExtendedFlags: 0x4000),
+            new("É/SUB/", Mode: 0x4000, ExtendedFlags: 0x4000),
+        ], [("sdir", Array.Empty<byte>())]));
+
+        index.IsTracked("ascii/", ignoreCase: true).Should().BeTrue();
+        index.IsTracked("É/sub/", ignoreCase: true).Should().BeTrue();
+        index.IsTracked("é/SUB/", ignoreCase: true).Should().BeFalse();
+        index.IsTracked("é/sub/file", ignoreCase: true).Should().BeFalse();
+        index.IsTracked("É/sub/file").Should().BeFalse();
+        Throws<NotSupportedException>(() => index.IsTracked("ascii/file", ignoreCase: true));
+        Throws<NotSupportedException>(() => index.IsTracked("É/sub/file", ignoreCase: true));
     }
 
     [Theory]

@@ -22,7 +22,7 @@ public sealed class GitIndex
     {
         Entries = entries.AsReadOnly();
         paths = new HashSet<string>(entries.Select(entry => entry.Path), StringComparer.Ordinal);
-        pathsIgnoringCase = new HashSet<string>(entries.Select(entry => entry.Path), StringComparer.OrdinalIgnoreCase);
+        pathsIgnoringCase = new HashSet<string>(entries.Select(entry => entry.Path), GitPathComparison.IgnoreCaseComparer);
         sparseDirectoryPaths = entries.Where(entry => entry.IsSparseDirectory).Select(entry => entry.Path).ToArray();
     }
 
@@ -60,7 +60,8 @@ public sealed class GitIndex
     }
 
     /// <summary>
-    /// Tests exact, ordinal index-path membership. Conflict stages, intent-to-add,
+    /// Tests exact index-path membership, optionally folding ASCII case only.
+    /// Conflict stages, intent-to-add,
     /// assume-valid, and skip-worktree entries are all tracked.
     /// </summary>
     /// <exception cref="NotSupportedException">
@@ -73,11 +74,9 @@ public sealed class GitIndex
         if ((ignoreCase ? pathsIgnoringCase : paths).Contains(relativePath))
             return true;
 
-        var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-
         foreach (var sparseDirectoryPath in sparseDirectoryPaths)
         {
-            if (relativePath.StartsWith(sparseDirectoryPath, comparison))
+            if (GitPathComparison.StartsWith(relativePath, sparseDirectoryPath, ignoreCase))
                 throw new NotSupportedException($"Tracking below sparse index directory '{sparseDirectoryPath}' requires expanding its tree.");
         }
 

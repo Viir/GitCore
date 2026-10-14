@@ -181,6 +181,20 @@ public class GitWorkingTreeTests
         storage.Reads.Should().NotContain(Path.GetFullPath("/repo/linked/.gitignore"));
     }
 
+    [Theory]
+    [InlineData("/home/test/.config/git/ignore")]
+    [InlineData("/repo/.git/info/exclude")]
+    public void Working_tree_follows_symlinked_global_and_repository_excludes(string path)
+    {
+        var storage = CreateStorage();
+        storage.AddFile(path, "*.tmp\n");
+        storage.AddLink(path);
+        var tree = GitWorkingTree.Open("/repo", storage);
+
+        tree.IsIgnored("generated.tmp").Should().BeTrue();
+        storage.Reads.Should().Contain(Path.GetFullPath(path));
+    }
+
     [Fact]
     public void Working_tree_matches_directory_rules_for_real_and_hypothetical_directories()
     {
@@ -229,6 +243,22 @@ public class GitWorkingTreeTests
         tree.IsTracked("linked.cs").Should().BeTrue();
         tree.IsTracked("main.cs").Should().BeFalse();
         tree.IsIgnored("generated.tmp").Should().BeTrue();
+    }
+
+    [Fact]
+    public void Working_tree_resolves_split_index_bases_through_the_injected_filesystem()
+    {
+        var storage = CreateStorage();
+        var shared = BuildIndex("linked.cs");
+        var checksum = Convert.ToHexStringLower(shared.AsSpan(shared.Length - 20));
+        storage.AddFile("/linked/.git", "gitdir: ../repo/.git/worktrees/linked\n");
+        storage.AddFile("/repo/.git/worktrees/linked/commondir", "../..\n");
+        storage.AddFile("/repo/.git/worktrees/linked/index", BuildSplitIndex(shared));
+        storage.AddFile("/repo/.git/sharedindex." + checksum, shared);
+        var tree = GitWorkingTree.Open("/linked", storage);
+
+        tree.IsTracked("linked.cs").Should().BeTrue();
+        storage.Reads.Should().Contain(Path.GetFullPath("/repo/.git/sharedindex." + checksum));
     }
 
     [Fact]
@@ -327,6 +357,23 @@ public class GitWorkingTreeTests
     }
 
     [Fact]
+    public void Working_tree_case_matching_does_not_fold_non_ascii_index_or_submodule_names()
+    {
+        var storage = CreateStorage();
+        storage.AddFile("/repo/.git/config", "[core]\nignoreCase = true\n");
+        storage.AddFile("/repo/.gitignore", "é.cs\n");
+        storage.AddFile("/repo/.git/index", BuildIndexEntries([("É.cs", 0x81a4u), ("É-module", 0xe000u)]));
+        storage.AddFile("/repo/é.cs", "");
+        storage.AddFile("/repo/é-module/file.cs", "");
+        var tree = GitWorkingTree.Open("/repo", storage);
+
+        tree.IsTracked("é.cs").Should().BeFalse();
+        tree.ShouldIncludeFile("é.cs").Should().BeFalse();
+        tree.ShouldIncludeFile("é-module/file.cs").Should().BeTrue();
+        tree.ShouldIncludeFile("É-module/file.cs").Should().BeFalse();
+    }
+
+    [Fact]
     public void Working_tree_passes_complete_raw_ignore_content_to_application_caches()
     {
         var storage = CreateStorage();
@@ -409,6 +456,8 @@ public class GitWorkingTreeTests
     [InlineData("gitdir:/repo/.git/", true)]
     [InlineData("gitdir:/repo/", true)]
     [InlineData("gitdir:./", true)]
+    [InlineData("gitdir:/[a-z]epo/.git", true)]
+    [InlineData("gitdir:/[a-z]other/.git", false)]
     [InlineData("gitdir:/other/.git", false)]
     [InlineData("gitdir/i:/REPO/.git", true)]
     [InlineData("gitdir:repo/.git", true)]
@@ -485,6 +534,28 @@ public class GitWorkingTreeTests
         var encoded = new byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(encoded, value);
         bytes.AddRange(encoded);
+    }
+
+    private static byte[] BuildSplitIndex(byte[] sharedIndex)
+    {
+        var bytes = new List<byte>();
+        bytes.AddRange("DIRC"u8.ToArray());
+        WriteUInt32(bytes, 2);
+        WriteUInt32(bytes, 0);
+        bytes.AddRange("link"u8.ToArray());
+        WriteUInt32(bytes, 60);
+        bytes.AddRange(sharedIndex.AsSpan(sharedIndex.Length - 20).ToArray());
+
+        for (var i = 0; i < 2; ++i)
+        {
+            WriteUInt32(bytes, 0);
+            WriteUInt32(bytes, 1);
+            bytes.AddRange(new byte[8]);
+            WriteUInt32(bytes, 0);
+        }
+
+        var content = bytes.ToArray();
+        return content.Concat(SHA1.HashData(content)).ToArray();
     }
 
     private sealed class MemoryFileSystem : IGitFileSystem

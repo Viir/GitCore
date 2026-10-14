@@ -173,9 +173,12 @@ public sealed class GitWorkingTree
                 _objectIdLength,
                 checksum =>
                     _fileSystem.ReadAllBytes(Path.Combine(GitDirectory, "sharedindex." + checksum))
+                    ?? (GitDirectory == CommonGitDirectory
+                        ? null
+                        : _fileSystem.ReadAllBytes(Path.Combine(CommonGitDirectory, "sharedindex." + checksum)))
                     ?? throw new InvalidDataException($"Shared Git index {checksum} is missing."));
 
-        _gitlinks = new HashSet<string>(IgnoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        _gitlinks = new HashSet<string>(IgnoreCase ? GitPathComparison.IgnoreCaseComparer : StringComparer.Ordinal);
 
         foreach (var entry in _index.Entries)
         {
@@ -219,8 +222,8 @@ public sealed class GitWorkingTree
 
         var components = relativePath.Split('/');
         var rules = new List<(string Directory, GitIgnoreFile File)>();
-        AddIgnoreFile(rules, _globalExcludesFile, "");
-        AddIgnoreFile(rules, Path.Combine(CommonGitDirectory, "info", "exclude"), "");
+        AddIgnoreFile(rules, _globalExcludesFile, "", followSymbolicLinks: true);
+        AddIgnoreFile(rules, Path.Combine(CommonGitDirectory, "info", "exclude"), "", followSymbolicLinks: true);
         var directory = "";
 
         for (var i = 0; i < components.Length; ++i)
@@ -350,10 +353,16 @@ public sealed class GitWorkingTree
     private void AddIgnoreFile(
         List<(string Directory, GitIgnoreFile File)> rules,
         string? absolutePath,
-        string directory)
+        string directory,
+        bool followSymbolicLinks = false)
     {
-        if (absolutePath is null ||
-            _fileSystem.GetEntryKind(absolutePath) is not GitFileSystemEntryKind.File)
+        if (absolutePath is null)
+            return;
+
+        var kind = _fileSystem.GetEntryKind(absolutePath);
+
+        if (kind is not GitFileSystemEntryKind.File &&
+            !(followSymbolicLinks && kind is GitFileSystemEntryKind.SymbolicLink))
             return;
 
         var bytes = _fileSystem.ReadAllBytes(absolutePath);

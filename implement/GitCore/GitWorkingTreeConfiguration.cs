@@ -52,7 +52,7 @@ internal sealed class GitWorkingTreeConfiguration
 
                     if (trimmed[0] is '[')
                     {
-                        var end = trimmed.IndexOf(']');
+                        var end = FindSectionEnd(trimmed);
 
                         if (end < 0)
                             throw new InvalidDataException($"Unterminated Git configuration section in {path}.");
@@ -191,6 +191,27 @@ internal sealed class GitWorkingTreeConfiguration
             throw new InvalidDataException("Cannot expand a Git configuration path without a home directory.");
 
         return Path.Combine(home, path[2..]);
+    }
+
+    private static int FindSectionEnd(string line)
+    {
+        var quoted = false;
+
+        for (var i = 1; i < line.Length; ++i)
+        {
+            if (quoted && line[i] is '\\')
+            {
+                ++i;
+                continue;
+            }
+
+            if (line[i] is '"')
+                quoted = !quoted;
+            else if (!quoted && line[i] is ']')
+                return i;
+        }
+
+        return -1;
     }
 
     private static bool ParseBoolean(string value)

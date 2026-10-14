@@ -150,8 +150,12 @@ Later rules override earlier rules; deeper `.gitignore` files take precedence ov
 parent files and repository/user excludes. An excluded parent directory must itself
 be re-included before any child can be re-included. Symlinked `.gitignore` files are
 not followed. `IsIgnored(path, isDirectory: true)` also supports hypothetical directories.
+Git does follow symlinks for user-wide excludes and `info/exclude`; these sources
+retain that behavior.
 
 Repository configuration determines case sensitivity through `core.ignoreCase`.
+Case-insensitive index and ignore matching fold ASCII only; distinct non-ASCII names
+are not conflated.
 System, user, repository and enabled worktree configuration are read, including regular
 includes and `includeIf` conditions for `gitdir`, `gitdir/i`, and `onbranch`.
 Other conditional include kinds throw `NotSupportedException` rather than silently
