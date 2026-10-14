@@ -8,8 +8,11 @@ namespace GitCore;
 internal sealed class GitWorkingTreeConfiguration
 {
     public bool IgnoreCase { get; private set; }
+
     public string? ExcludesFile { get; private set; }
+
     public int ObjectIdLength { get; private set; } = 20;
+
     private bool _worktreeConfig;
 
     public static GitWorkingTreeConfiguration Read(GitWorkingTree tree, IGitFileSystem fileSystem)
@@ -85,12 +88,15 @@ internal sealed class GitWorkingTreeConfiguration
                     }
                     else if (section == "extensions" && key == "objectformat")
                     {
-                        result.ObjectIdLength = value.ToLowerInvariant() switch
-                        {
-                            "sha1" => 20,
-                            "sha256" => 32,
-                            _ => throw new NotSupportedException($"Unsupported Git object format {value}.")
-                        };
+                        result.ObjectIdLength =
+                            value.ToLowerInvariant() switch
+                            {
+                                "sha1" => 20,
+                                "sha256" => 32,
+
+                                _ =>
+                                throw new NotSupportedException($"Unsupported Git object format {value}.")
+                            };
                     }
                     else if (section == "extensions" && key == "worktreeconfig")
                     {
@@ -148,7 +154,12 @@ internal sealed class GitWorkingTreeConfiguration
             var pattern = ExpandHome(condition[prefixLength..], home).Replace(Path.DirectorySeparatorChar, '/');
 
             if (pattern.StartsWith("./", StringComparison.Ordinal))
-                pattern = Path.GetFullPath(pattern, Path.GetDirectoryName(configPath)!).Replace(Path.DirectorySeparatorChar, '/');
+            {
+                pattern =
+                    Path.GetFullPath(pattern, Path.GetDirectoryName(configPath)!).Replace(
+                        Path.DirectorySeparatorChar,
+                        '/');
+            }
             else if (!Path.IsPathRooted(pattern))
                 pattern = "**/" + pattern;
 
@@ -157,7 +168,9 @@ internal sealed class GitWorkingTreeConfiguration
 
             var gitPath = tree.GitDirectory.Replace(Path.DirectorySeparatorChar, '/').TrimStart('/');
             var parsed = GitIgnoreFile.Parse("/" + pattern.TrimStart('/'));
-            return parsed.MatchPath(gitPath, true, ignoreCase) == true ||
+
+            return
+                parsed.MatchPath(gitPath, true, ignoreCase) == true ||
                 pattern.EndsWith("/**", StringComparison.Ordinal) &&
                 parsed.MatchPath(gitPath + "/_", true, ignoreCase) == true;
         }
@@ -207,6 +220,7 @@ internal sealed class GitWorkingTreeConfiguration
 
             if (line[i] is '"')
                 quoted = !quoted;
+
             else if (!quoted && line[i] is ']')
                 return i;
         }
@@ -220,7 +234,9 @@ internal sealed class GitWorkingTreeConfiguration
         {
             "true" or "yes" or "on" or "1" => true,
             "" or "false" or "no" or "off" or "0" => false,
-            _ => throw new InvalidDataException($"Invalid Git configuration boolean {value}.")
+
+            _ =>
+            throw new InvalidDataException($"Invalid Git configuration boolean {value}.")
         };
     }
 

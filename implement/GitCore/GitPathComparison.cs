@@ -36,7 +36,8 @@ internal static class GitPathComparison
             if (ReferenceEquals(left, right))
                 return true;
 
-            return left is not null && right is not null &&
+            return
+                left is not null && right is not null &&
                 left.Length == right.Length && StartsWith(left, right, ignoreCase: true);
         }
 

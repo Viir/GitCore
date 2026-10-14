@@ -267,9 +267,11 @@ public sealed class GitIgnoreFile
 
                     var atStartBoundary = start is 0 || pattern[start - 1] is (byte)'/';
                     var followedBySlash = index + 1 < pattern.Length && pattern[index + 1] is (byte)'/';
+
                     var followedByEscapedSlash =
                         index + 2 < pattern.Length &&
                         pattern[index + 1] is (byte)'\\' && pattern[index + 2] is (byte)'/';
+
                     var atEndBoundary = index + 1 == pattern.Length || followedBySlash || followedByEscapedSlash;
 
                     if (index > start && atStartBoundary && atEndBoundary)
@@ -329,23 +331,31 @@ public sealed class GitIgnoreFile
                     token.Kind switch
                     {
                         TokenKind.Star =>
-                            previous[offset] || (offset > 0 && path[offset - 1] is not (byte)'/' && next[offset - 1]),
+                        previous[offset] || (offset > 0 && path[offset - 1] is not (byte)'/' && next[offset - 1]),
+
                         TokenKind.GlobStar =>
-                            previous[offset] || (offset > 0 && next[offset - 1]),
+                        previous[offset] || (offset > 0 && next[offset - 1]),
+
                         TokenKind.GlobDirectories =>
-                            previous[offset] || (offset > 0 && path[offset - 1] is (byte)'/' && earlierReachable),
+                        previous[offset] || (offset > 0 && path[offset - 1] is (byte)'/' && earlierReachable),
+
                         TokenKind.Literal =>
-                            offset > 0 && previous[offset - 1] && Equal(token.Literal, path[offset - 1], ignoreCase),
+                        offset > 0 && previous[offset - 1] && Equal(token.Literal, path[offset - 1], ignoreCase),
+
                         TokenKind.EscapedLiteral =>
-                            // Git folds the input byte, but not an escaped pattern byte.
-                            offset > 0 && previous[offset - 1] &&
-                            token.Literal == (ignoreCase ? FoldCase(path[offset - 1]) : path[offset - 1]),
+                        // Git folds the input byte, but not an escaped pattern byte.
+                        offset > 0 && previous[offset - 1] &&
+                        token.Literal == (ignoreCase ? FoldCase(path[offset - 1]) : path[offset - 1]),
+
                         TokenKind.Any =>
-                            offset > 0 && previous[offset - 1] && path[offset - 1] is not (byte)'/',
+                        offset > 0 && previous[offset - 1] && path[offset - 1] is not (byte)'/',
+
                         TokenKind.CharacterClass =>
-                            offset > 0 && previous[offset - 1] && path[offset - 1] is not (byte)'/' &&
-                            token.CharacterClass!.Matches(path[offset - 1], ignoreCase),
-                        _ => false
+                        offset > 0 && previous[offset - 1] && path[offset - 1] is not (byte)'/' &&
+                        token.CharacterClass!.Matches(path[offset - 1], ignoreCase),
+
+                        _ =>
+                        false
                     };
 
                 earlierReachable |= previous[offset];
@@ -412,7 +422,9 @@ public sealed class GitIgnoreFile
                     PosixClass.Space => value is (byte)' ' or (byte)'\t' or (byte)'\n' or (byte)'\r' or 11 or 12,
                     PosixClass.Upper => upper || (ignoreCase && lower),
                     PosixClass.Xdigit => digit || FoldCase(value) is >= (byte)'a' and <= (byte)'f',
-                    _ => false
+
+                    _ =>
+                    false
                 };
             }
 
@@ -426,6 +438,7 @@ public sealed class GitIgnoreFile
                 return false;
 
             var folded = FoldCase(value);
+
             var capitalized =
                 folded is >= (byte)'a' and <= (byte)'z' ? (byte)(folded - ('a' - 'A')) : folded;
 
@@ -530,22 +543,26 @@ public sealed class GitIgnoreFile
             }
 
             var name = Encoding.ASCII.GetString(pattern, start, cursor - start - 1);
-            var posix = name switch
-            {
-                "alnum" => PosixClass.Alnum,
-                "alpha" => PosixClass.Alpha,
-                "blank" => PosixClass.Blank,
-                "cntrl" => PosixClass.Cntrl,
-                "digit" => PosixClass.Digit,
-                "graph" => PosixClass.Graph,
-                "lower" => PosixClass.Lower,
-                "print" => PosixClass.Print,
-                "punct" => PosixClass.Punct,
-                "space" => PosixClass.Space,
-                "upper" => PosixClass.Upper,
-                "xdigit" => PosixClass.Xdigit,
-                _ => PosixClass.None
-            };
+
+            var posix =
+                name switch
+                {
+                    "alnum" => PosixClass.Alnum,
+                    "alpha" => PosixClass.Alpha,
+                    "blank" => PosixClass.Blank,
+                    "cntrl" => PosixClass.Cntrl,
+                    "digit" => PosixClass.Digit,
+                    "graph" => PosixClass.Graph,
+                    "lower" => PosixClass.Lower,
+                    "print" => PosixClass.Print,
+                    "punct" => PosixClass.Punct,
+                    "space" => PosixClass.Space,
+                    "upper" => PosixClass.Upper,
+                    "xdigit" => PosixClass.Xdigit,
+
+                    _ =>
+                    PosixClass.None
+                };
 
             if (posix is PosixClass.None)
                 return false;

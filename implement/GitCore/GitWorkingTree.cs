@@ -38,12 +38,20 @@ public sealed class GitWorkingTreeOptions
 public sealed class GitWorkingTree
 {
     private static readonly UTF8Encoding s_utf8 = new(false, true);
+
     private readonly IGitFileSystem _fileSystem;
+
     private readonly Func<string, GitIgnoreFile> _parseIgnoreFile;
-    private readonly Dictionary<string, (string Content, GitIgnoreFile Parsed)> _ignoreFiles = new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, (string Content, GitIgnoreFile Parsed)> _ignoreFiles =
+        new(StringComparer.Ordinal);
+
     private readonly string? _globalExcludesFile;
+
     private readonly int _objectIdLength;
+
     private GitIndex? _index;
+
     private HashSet<string>? _gitlinks;
 
     private GitWorkingTree(
@@ -64,9 +72,12 @@ public sealed class GitWorkingTree
         _objectIdLength = configuration.ObjectIdLength;
         var excludesFile = options.GlobalExcludesFilePath ?? configuration.ExcludesFile;
 
-        _globalExcludesFile = string.IsNullOrEmpty(excludesFile)
-            ? null
-            : Path.GetFullPath(excludesFile, rootDirectory);
+        _globalExcludesFile =
+            string.IsNullOrEmpty(excludesFile)
+            ?
+            null
+            :
+            Path.GetFullPath(excludesFile, rootDirectory);
     }
 
     /// <summary>Gets the absolute working-tree root.</summary>
@@ -101,7 +112,9 @@ public sealed class GitWorkingTree
             {
                 GitFileSystemEntryKind.Directory => gitPath,
                 GitFileSystemEntryKind.File => ResolveGitFile(gitPath, storage),
-                _ => throw new DirectoryNotFoundException($"No working-tree .git entry exists in {root}.")
+
+                _ =>
+                throw new DirectoryNotFoundException($"No working-tree .git entry exists in {root}.")
             };
 
         if (storage.GetEntryKind(gitDirectory) is not GitFileSystemEntryKind.Directory)
@@ -166,17 +179,22 @@ public sealed class GitWorkingTree
 
         var bytes = _fileSystem.ReadAllBytes(Path.Combine(GitDirectory, "index"));
 
-        _index = bytes is null
-            ? GitIndex.Empty
-            : GitIndex.Parse(
+        _index =
+            bytes is null
+            ?
+            GitIndex.Empty
+            :
+            GitIndex.Parse(
                 bytes,
                 _objectIdLength,
                 checksum =>
-                    _fileSystem.ReadAllBytes(Path.Combine(GitDirectory, "sharedindex." + checksum))
-                    ?? (GitDirectory == CommonGitDirectory
-                        ? null
-                        : _fileSystem.ReadAllBytes(Path.Combine(CommonGitDirectory, "sharedindex." + checksum)))
-                    ?? throw new InvalidDataException($"Shared Git index {checksum} is missing."));
+                _fileSystem.ReadAllBytes(Path.Combine(GitDirectory, "sharedindex." + checksum))
+                ?? (GitDirectory == CommonGitDirectory
+                ?
+                null
+                :
+                _fileSystem.ReadAllBytes(Path.Combine(CommonGitDirectory, "sharedindex." + checksum)))
+                ?? throw new InvalidDataException($"Shared Git index {checksum} is missing."));
 
         _gitlinks = new HashSet<string>(IgnoreCase ? GitPathComparison.IgnoreCaseComparer : StringComparer.Ordinal);
 
@@ -231,9 +249,11 @@ public sealed class GitWorkingTree
             AddIgnoreFile(rules, Path.Combine(ToAbsolutePath(directory), ".gitignore"), directory);
             var candidate = directory.Length is 0 ? components[i] : directory + "/" + components[i];
             var kind = _fileSystem.GetEntryKind(ToAbsolutePath(candidate));
+
             var candidateIsDirectory =
                 kind is not GitFileSystemEntryKind.SymbolicLink &&
                 (i < components.Length - 1 || isDirectory || kind is GitFileSystemEntryKind.Directory);
+
             var ignored = false;
 
             foreach (var (baseDirectory, file) in rules)
@@ -291,7 +311,9 @@ public sealed class GitWorkingTree
             {
                 if (kind is not GitFileSystemEntryKind.Directory ||
                     _fileSystem.GetEntryKind(Path.Combine(directory, ".git")) is not GitFileSystemEntryKind.Missing)
+                {
                     return false;
+                }
             }
         }
 
@@ -330,11 +352,16 @@ public sealed class GitWorkingTree
         if (Path.IsPathRooted(relative) ||
             relative == ".." ||
             relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
             throw new ArgumentException("The path must be inside the working tree.", nameof(path));
+        }
 
-        return Path.DirectorySeparatorChar == '/'
-            ? relative
-            : relative.Replace(Path.DirectorySeparatorChar, '/');
+        return
+            Path.DirectorySeparatorChar == '/'
+            ?
+            relative
+            :
+            relative.Replace(Path.DirectorySeparatorChar, '/');
     }
 
     private string ToAbsolutePath(string relativePath)
@@ -345,7 +372,9 @@ public sealed class GitWorkingTree
     private static bool IsWithin(string path, string directory)
     {
         var relative = Path.GetRelativePath(directory, path);
-        return !Path.IsPathRooted(relative) &&
+
+        return
+            !Path.IsPathRooted(relative) &&
             relative != ".." &&
             !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
@@ -363,7 +392,9 @@ public sealed class GitWorkingTree
 
         if (kind is not GitFileSystemEntryKind.File &&
             !(followSymbolicLinks && kind is GitFileSystemEntryKind.SymbolicLink))
+        {
             return;
+        }
 
         var bytes = _fileSystem.ReadAllBytes(absolutePath);
 
@@ -383,8 +414,10 @@ public sealed class GitWorkingTree
 
     private static string ResolveGitFile(string path, IGitFileSystem fileSystem)
     {
-        var bytes = fileSystem.ReadAllBytes(path)
+        var bytes =
+            fileSystem.ReadAllBytes(path)
             ?? throw new InvalidDataException($"Git file {path} disappeared.");
+
         var content = Decode(bytes).Trim();
         const string Prefix = "gitdir:";
 

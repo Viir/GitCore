@@ -58,9 +58,12 @@ public sealed class PhysicalGitFileSystem : IGitFileSystem
             if ((attributes & FileAttributes.ReparsePoint) is not 0)
                 return GitFileSystemEntryKind.SymbolicLink;
 
-            return (attributes & FileAttributes.Directory) is not 0
-                ? GitFileSystemEntryKind.Directory
-                : GitFileSystemEntryKind.File;
+            return
+                (attributes & FileAttributes.Directory) is not 0
+                ?
+                GitFileSystemEntryKind.Directory
+                :
+                GitFileSystemEntryKind.File;
         }
         catch (FileNotFoundException)
         {

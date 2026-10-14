@@ -18,17 +18,20 @@ public class GitIndexTests
     [InlineData(4)]
     public void Index_reads_versions_modes_stages_and_unicode(int version)
     {
-        var index = GitIndex.Parse(BuildIndex(version,
-        [
-            new("README.md", AssumeValid: true),
-            new("conflict", Stage: 1),
-            new("conflict", Stage: 2),
-            new("conflict", Stage: 3),
-            new("executable", Mode: 0x81ed),
-            new("link", Mode: 0xa000),
-            new("submodule", Mode: 0xe000),
-            new("目录/🙂.txt"),
-        ]));
+        var index =
+            GitIndex.Parse(
+                BuildIndex(
+                    version,
+                    [
+                        new("README.md", AssumeValid: true),
+                        new("conflict", Stage: 1),
+                        new("conflict", Stage: 2),
+                        new("conflict", Stage: 3),
+                        new("executable", Mode: 0x81ed),
+                        new("link", Mode: 0xa000),
+                        new("submodule", Mode: 0xe000),
+                        new("目录/🙂.txt"),
+                    ]));
 
         index.Entries.Count.Should().Be(8);
         index.Entries[0].Path.Should().Be("README.md");
@@ -66,12 +69,15 @@ public class GitIndexTests
     [InlineData(4)]
     public void Index_tracks_skip_worktree_and_intent_to_add(int version)
     {
-        var index = GitIndex.Parse(BuildIndex(version,
-        [
-            new("intent", ExtendedFlags: 0x2000, ObjectByte: 0),
-            new("skip", ExtendedFlags: 0x4000),
-            new("skip-intent", AssumeValid: true, ExtendedFlags: 0x6000),
-        ]));
+        var index =
+            GitIndex.Parse(
+                BuildIndex(
+                    version,
+                    [
+                        new("intent", ExtendedFlags: 0x2000, ObjectByte: 0),
+                        new("skip", ExtendedFlags: 0x4000),
+                        new("skip-intent", AssumeValid: true, ExtendedFlags: 0x6000),
+                    ]));
 
         index.IsTracked("intent").Should().BeTrue();
         index.IsTracked("skip").Should().BeTrue();
@@ -133,13 +139,17 @@ public class GitIndexTests
     public void Index_v4_decodes_multibyte_removal_and_unicode_byte_prefixes_without_padding()
     {
         var longPath = "a" + new string('x', 300);
-        var index = GitIndex.Parse(BuildIndex(4,
-        [
-            new(longPath),
-            new("b"),
-            new("目录/文"),
-            new("目录/斌"),
-        ]));
+
+        var index =
+            GitIndex.Parse(
+                BuildIndex(
+                    4,
+                    [
+                        new(longPath),
+                        new("b"),
+                        new("目录/文"),
+                        new("目录/斌"),
+                    ]));
 
         index.Entries.Select(entry => entry.Path).Should().Equal(longPath, "b", "目录/文", "目录/斌");
     }
@@ -155,21 +165,38 @@ public class GitIndexTests
     [Fact]
     public void Index_ignores_optional_extensions_but_rejects_unknown_mandatory_extensions()
     {
-        var index = GitIndex.Parse(BuildIndex(2, [new("file")], [("TEST", new byte[] { 1, 2, 3 }), ("TREE", Array.Empty<byte>())]));
+        var index =
+            GitIndex.Parse(
+                BuildIndex(
+                    2,
+                    [
+                    new("file")
+                    ],
+                    [
+                    ("TEST", new byte[] { 1, 2, 3 }),
+                    ("TREE", Array.Empty<byte>())
+                    ]));
+
         index.IsTracked("file").Should().BeTrue();
 
-        var exception = Throws<NotSupportedException>(() => GitIndex.Parse(BuildIndex(2, [], [("abcd", Array.Empty<byte>())])));
+        var exception =
+            Throws<NotSupportedException>(() => GitIndex.Parse(BuildIndex(2, [], [("abcd", Array.Empty<byte>())])));
+
         exception.Message.Should().Contain("abcd");
     }
 
     [Fact]
     public void Index_sparse_directories_are_exact_entries_and_descendants_are_not_silently_untracked()
     {
-        var index = GitIndex.Parse(BuildIndex(3,
-        [
-            new("included"),
-            new("sparse/", Mode: 0x4000, ExtendedFlags: 0x4000),
-        ], [("sdir", Array.Empty<byte>())]));
+        var index =
+            GitIndex.Parse(
+                BuildIndex(
+                    3,
+                    [
+                        new("included"),
+                        new("sparse/", Mode: 0x4000, ExtendedFlags: 0x4000),
+                    ],
+                    [("sdir", Array.Empty<byte>())]));
 
         index.Entries[1].IsSparseDirectory.Should().BeTrue();
         index.IsTracked("sparse/").Should().BeTrue();
@@ -183,11 +210,15 @@ public class GitIndexTests
     [Fact]
     public void Index_sparse_directory_prefixes_fold_ascii_but_preserve_distinct_unicode_paths()
     {
-        var index = GitIndex.Parse(BuildIndex(3,
-        [
-            new("ASCII/", Mode: 0x4000, ExtendedFlags: 0x4000),
-            new("É/SUB/", Mode: 0x4000, ExtendedFlags: 0x4000),
-        ], [("sdir", Array.Empty<byte>())]));
+        var index =
+            GitIndex.Parse(
+                BuildIndex(
+                    3,
+                    [
+                        new("ASCII/", Mode: 0x4000, ExtendedFlags: 0x4000),
+                        new("É/SUB/", Mode: 0x4000, ExtendedFlags: 0x4000),
+                    ],
+                    [("sdir", Array.Empty<byte>())]));
 
         index.IsTracked("ascii/", ignoreCase: true).Should().BeTrue();
         index.IsTracked("É/sub/", ignoreCase: true).Should().BeTrue();
@@ -286,10 +317,15 @@ public class GitIndexTests
     public void Index_rejects_malformed_v4_compression()
     {
         Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(4, [new("file", V4Prefix: [1])])));
-        Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(4, [new("file", V4Prefix: [0xff, 0xff, 0xff, 0xff, 0xff, 0x7f])])));
-        var unterminated = AppendChecksum(
-            [.. "DIRC"u8, 0, 0, 0, 4, 0, 0, 0, 1, .. new byte[62], 0x80],
-            20);
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(BuildIndex(4, [new("file", V4Prefix: [0xff, 0xff, 0xff, 0xff, 0xff, 0x7f])])));
+
+        var unterminated =
+            AppendChecksum(
+                [.. "DIRC"u8, 0, 0, 0, 4, 0, 0, 0, 1, .. new byte[62], 0x80],
+                20);
+
         Throws<InvalidDataException>(() => GitIndex.Parse(unterminated));
     }
 
@@ -300,10 +336,18 @@ public class GitIndexTests
         BinaryPrimitives.WriteUInt32BigEndian(oversized.AsSpan(16, 4), uint.MaxValue);
         Rehash(oversized);
         Throws<InvalidDataException>(() => GitIndex.Parse(oversized));
-        Throws<InvalidDataException>(() => GitIndex.Parse(AppendChecksum([.. "DIRC"u8, 0, 0, 0, 2, 0, 0, 0, 0, 1], 20)));
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(AppendChecksum([.. "DIRC"u8, 0, 0, 0, 2, 0, 0, 0, 0, 1], 20)));
+
         Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(2, [], [("1BAD", Array.Empty<byte>())])));
-        Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(3, [new("sparse/", Mode: 0x4000, ExtendedFlags: 0x4000)])));
-        Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(3, [new("sparse/", Mode: 0x4000)], [("sdir", Array.Empty<byte>())])));
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(BuildIndex(3, [new("sparse/", Mode: 0x4000, ExtendedFlags: 0x4000)])));
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(BuildIndex(3, [new("sparse/", Mode: 0x4000)], [("sdir", Array.Empty<byte>())])));
+
         Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(3, [], [("sdir", new byte[] { 1 })])));
     }
 
@@ -314,24 +358,48 @@ public class GitIndexTests
     [InlineData(4, 32)]
     public void Index_merges_split_index_delete_replace_and_new_entries(int version, int objectIdLength)
     {
-        var shared = BuildIndex(version, [new("a"), new("b"), new("c"), new("conflict", Stage: 1)], objectIdLength: objectIdLength);
+        var shared =
+            BuildIndex(
+                version,
+                [
+                new("a"),
+                new("b"),
+                new("c"),
+                new("conflict", Stage: 1)
+                ],
+                objectIdLength: objectIdLength);
+
         var expectedId = Convert.ToHexStringLower(shared.AsSpan(shared.Length - objectIdLength));
-        var link = BuildLink(shared.AsSpan(shared.Length - objectIdLength).ToArray(), BuildBitmap(4, [1]), BuildBitmap(4, [2, 3]));
-        var split = BuildIndex(version,
-        [
-            new("", AssumeValid: true, ObjectByte: 0x22),
-            new("", Stage: 2),
-            new("added"),
-        ], [("link", link)], objectIdLength);
+
+        var link =
+            BuildLink(
+                shared.AsSpan(shared.Length - objectIdLength).ToArray(),
+                BuildBitmap(4, [1]),
+                BuildBitmap(4, [2, 3]));
+
+        var split =
+            BuildIndex(
+                version,
+                [
+                    new("", AssumeValid: true, ObjectByte: 0x22),
+                    new("", Stage: 2),
+                    new("added"),
+                ],
+                [("link", link)],
+                objectIdLength);
+
         var resolverCalls = 0;
 
-        var index = GitIndex.Parse(split, objectIdLength,
-            checksum =>
-            {
-                resolverCalls++;
-                checksum.Should().Be(expectedId);
-                return shared;
-            });
+        var index =
+            GitIndex.Parse(
+                split,
+                objectIdLength,
+                checksum =>
+                {
+                    resolverCalls++;
+                    checksum.Should().Be(expectedId);
+                    return shared;
+                });
 
         resolverCalls.Should().Be(1);
         index.Entries.Select(entry => entry.Path).Should().Equal("a", "added", "c", "conflict");
@@ -349,8 +417,14 @@ public class GitIndexTests
         var linked = BuildIndex(2, [], [("link", shared[^20..])]);
         GitIndex.Parse(linked, readSharedIndex: _ => shared).IsTracked("a").Should().BeTrue();
         GitIndex.Parse(BuildIndex(2, [new("a")], [("link", new byte[20])])).IsTracked("a").Should().BeTrue();
-        GitIndex.Parse(BuildIndex(2, [new("a")],
-            [("link", BuildLink(new byte[20], BuildBitmap(0, []), BuildBitmap(0, [])))])).IsTracked("a").Should().BeTrue();
+
+        GitIndex.Parse(
+            BuildIndex(
+                2,
+                [new("a")],
+                [
+                ("link", BuildLink(new byte[20], BuildBitmap(0, []), BuildBitmap(0, [])))
+                ])).IsTracked("a").Should().BeTrue();
     }
 
     [Fact]
@@ -362,7 +436,12 @@ public class GitIndexTests
         Throws<NotSupportedException>(() => GitIndex.Parse(split));
         Throws<InvalidDataException>(() => GitIndex.Parse(split, readSharedIndex: _ => BuildIndex(2, [new("b")])));
         Throws<InvalidDataException>(() => GitIndex.Parse(split, readSharedIndex: _ => ReadOnlyMemory<byte>.Empty));
-        Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(2, [], [("link", link), ("link", link)]), readSharedIndex: _ => shared));
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(
+                BuildIndex(2, [], [("link", link), ("link", link)]),
+                readSharedIndex: _ => shared));
+
         Throws<InvalidDataException>(() => GitIndex.Parse(BuildIndex(2, [], [("link", new byte[19])])));
 
         var nested = BuildIndex(2, [], [("link", new byte[20])]);
@@ -459,8 +538,11 @@ public class GitIndexTests
             stream.Write(new byte[12]);
             stream.Write(Enumerable.Repeat(entry.ObjectByte, objectIdLength).ToArray());
             var path = entry.RawPath ?? Encoding.UTF8.GetBytes(entry.Path);
-            var flags = (ushort)(Math.Min(path.Length, 0xfff) | (entry.Stage << 12) |
-                (entry.AssumeValid ? 0x8000 : 0) | (entry.ExtendedFlags is not null ? 0x4000 : 0));
+
+            var flags =
+                (ushort)(Math.Min(path.Length, 0xfff) | (entry.Stage << 12) |
+                    (entry.AssumeValid ? 0x8000 : 0) | (entry.ExtendedFlags is not null ? 0x4000 : 0));
+
             Span<byte> flagBytes = stackalloc byte[2];
             BinaryPrimitives.WriteUInt16BigEndian(flagBytes, flags);
             stream.Write(flagBytes);
@@ -475,8 +557,11 @@ public class GitIndexTests
 
             if (version == 4)
             {
-                while (prefixLength < Math.Min(previousPath.Length, path.Length) && previousPath[prefixLength] == path[prefixLength])
+                while (prefixLength < Math.Min(previousPath.Length, path.Length) &&
+                    previousPath[prefixLength] == path[prefixLength])
+                {
                     prefixLength++;
+                }
 
                 stream.Write(entry.V4Prefix ?? EncodePathVarint(previousPath.Length - prefixLength));
             }
@@ -547,8 +632,13 @@ public class GitIndexTests
 
     private static void Rehash(byte[] content, int objectIdLength = 20)
     {
-        var checksum = objectIdLength == 20 ? SHA1.HashData(content.AsSpan(0, content.Length - objectIdLength)) :
+        var checksum =
+            objectIdLength == 20
+            ?
+            SHA1.HashData(content.AsSpan(0, content.Length - objectIdLength))
+            :
             SHA256.HashData(content.AsSpan(0, content.Length - objectIdLength));
+
         checksum.CopyTo(content, content.Length - objectIdLength);
     }
 

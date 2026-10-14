@@ -1176,10 +1176,10 @@ public sealed class LocalGitRepository : IGitObjectDatabase
                 resolvedType = baseObject.Type;
             }
             else if (objectType is
-                     PackFile.ObjectType.Commit or
-                     PackFile.ObjectType.Tree or
-                     PackFile.ObjectType.Blob or
-                     PackFile.ObjectType.Tag)
+                PackFile.ObjectType.Commit or
+                PackFile.ObjectType.Tree or
+                PackFile.ObjectType.Blob or
+                PackFile.ObjectType.Tag)
             {
                 resolvedData = DecompressRegion(region, declaredSize, cancellationToken);
                 resolvedType = objectType;
@@ -1811,8 +1811,9 @@ public sealed class LocalGitRepository : IGitObjectDatabase
 
             else if (Directory.Exists(Path.Combine(originalPath, "objects")) &&
                 File.Exists(Path.Combine(originalPath, "HEAD")))
+            {
                 gitDirectory = originalPath;
-
+            }
             else
             {
                 throw new InvalidOperationException(

@@ -14,15 +14,21 @@ namespace GitCore;
 public sealed class GitIndex
 {
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
+
     private readonly HashSet<string> paths;
+
     private readonly HashSet<string> pathsIgnoringCase;
+
     private readonly string[] sparseDirectoryPaths;
 
     private GitIndex(List<GitIndexEntry> entries)
     {
         Entries = entries.AsReadOnly();
         paths = new HashSet<string>(entries.Select(entry => entry.Path), StringComparer.Ordinal);
-        pathsIgnoringCase = new HashSet<string>(entries.Select(entry => entry.Path), GitPathComparison.IgnoreCaseComparer);
+
+        pathsIgnoringCase =
+            new HashSet<string>(entries.Select(entry => entry.Path), GitPathComparison.IgnoreCaseComparer);
+
         sparseDirectoryPaths = entries.Where(entry => entry.IsSparseDirectory).Select(entry => entry.Path).ToArray();
     }
 
@@ -54,7 +60,11 @@ public sealed class GitIndex
         Func<string, ReadOnlyMemory<byte>>? readSharedIndex = null)
     {
         if (objectIdLength is not (20 or 32))
-            throw new ArgumentOutOfRangeException(nameof(objectIdLength), "Git object identifiers must contain 20 or 32 bytes.");
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(objectIdLength),
+                "Git object identifiers must contain 20 or 32 bytes.");
+        }
 
         return new GitIndex(ParseEntries(content, objectIdLength, readSharedIndex, isShared: false));
     }
@@ -77,7 +87,10 @@ public sealed class GitIndex
         foreach (var sparseDirectoryPath in sparseDirectoryPaths)
         {
             if (GitPathComparison.StartsWith(relativePath, sparseDirectoryPath, ignoreCase))
-                throw new NotSupportedException($"Tracking below sparse index directory '{sparseDirectoryPath}' requires expanding its tree.");
+            {
+                throw new NotSupportedException(
+                    $"Tracking below sparse index directory '{sparseDirectoryPath}' requires expanding its tree.");
+            }
         }
 
         return false;
@@ -98,7 +111,9 @@ public sealed class GitIndex
             throw new InvalidDataException("Invalid Git index signature.");
 
         var checksumOffset = span.Length - objectIdLength;
-        var checksum = objectIdLength == 20 ? SHA1.HashData(span[..checksumOffset]) : SHA256.HashData(span[..checksumOffset]);
+
+        var checksum =
+            objectIdLength == 20 ? SHA1.HashData(span[..checksumOffset]) : SHA256.HashData(span[..checksumOffset]);
 
         if (!span[checksumOffset..].SequenceEqual(checksum))
             throw new InvalidDataException("Git index checksum does not match its content.");
@@ -148,7 +163,10 @@ public sealed class GitIndex
                 var removeLength = ReadPathVarint(span, ref offset, checksumOffset);
 
                 if (removeLength > previousPath.Length)
-                    throw new InvalidDataException("Version 4 Git index path removes more bytes than its predecessor contains.");
+                {
+                    throw new InvalidDataException(
+                        "Version 4 Git index path removes more bytes than its predecessor contains.");
+                }
 
                 prefixLength = previousPath.Length - removeLength;
             }
@@ -193,7 +211,14 @@ public sealed class GitIndex
                 offset += padding;
             }
 
-            entries.Add(new GitIndexEntry(path, mode, (flags >> 12) & 3, (extendedFlags & 0x4000) != 0, (flags & 0x8000) != 0, objectId));
+            entries.Add(
+                new GitIndexEntry(
+                    path,
+                    mode,
+                    (flags >> 12) & 3,
+                    (extendedFlags & 0x4000) != 0,
+                    (flags & 0x8000) != 0,
+                    objectId));
         }
 
         ReadOnlyMemory<byte>? link = null;
@@ -294,13 +319,14 @@ public sealed class GitIndex
                 if (replacement.Path.Length != 0)
                     throw new InvalidDataException("Split Git index replacement entries must have empty paths.");
 
-                merged.Add(new GitIndexEntry(
-                    sharedEntries[index].Path,
-                    replacement.Mode,
-                    replacement.Stage,
-                    replacement.SkipWorktree,
-                    replacement.AssumeValid,
-                    replacement.ObjectId));
+                merged.Add(
+                    new GitIndexEntry(
+                        sharedEntries[index].Path,
+                        replacement.Mode,
+                        replacement.Stage,
+                        replacement.SkipWorktree,
+                        replacement.AssumeValid,
+                        replacement.ObjectId));
             }
             else
             {
@@ -351,7 +377,9 @@ public sealed class GitIndex
 
             if (runLength + literalCount > expectedWords - expandedWords ||
                 literalCount > (ulong)wordCount - (ulong)compressedPosition)
+            {
                 throw new InvalidDataException("Split Git index EWAH run exceeds its bounds.");
+            }
 
             if ((runningWord & 1) != 0)
             {
@@ -419,8 +447,12 @@ public sealed class GitIndex
 
             if (entry.IsSparseDirectory)
             {
-                if (!allowSparse || !entry.SkipWorktree || entry.Stage != 0 || !path.EndsWith("/", StringComparison.Ordinal))
-                    throw new InvalidDataException("Git sparse-directory entry is invalid or lacks the sparse-index extension.");
+                if (!allowSparse || !entry.SkipWorktree || entry.Stage != 0 ||
+                    !path.EndsWith("/", StringComparison.Ordinal))
+                {
+                    throw new InvalidDataException(
+                        "Git sparse-directory entry is invalid or lacks the sparse-index extension.");
+                }
 
                 path = path[..^1];
             }

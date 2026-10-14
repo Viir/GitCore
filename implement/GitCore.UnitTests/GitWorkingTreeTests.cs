@@ -138,19 +138,25 @@ public class GitWorkingTreeTests
         storage.AddFile("/repo/src/.gitignore", "*.tmp\n");
         var cache = new Dictionary<string, GitIgnoreFile>();
         var parses = 0;
-        var tree = GitWorkingTree.Open("/repo", storage, new GitWorkingTreeOptions
-        {
-            ParseIgnoreFile = content =>
-            {
-                if (!cache.TryGetValue(content, out var parsed))
-                {
-                    ++parses;
-                    cache[content] = parsed = GitIgnoreFile.Parse(content);
-                }
 
-                return parsed;
-            }
-        });
+        var tree =
+            GitWorkingTree.Open(
+                "/repo",
+                storage,
+                new GitWorkingTreeOptions
+                {
+                    ParseIgnoreFile =
+                    content =>
+                    {
+                        if (!cache.TryGetValue(content, out var parsed))
+                        {
+                            ++parses;
+                            cache[content] = parsed = GitIgnoreFile.Parse(content);
+                        }
+
+                        return parsed;
+                    }
+                });
 
         tree.IsIgnored("src/a.cs").Should().BeFalse();
         tree.IsIgnored("src/b.cs").Should().BeFalse();
@@ -221,7 +227,10 @@ public class GitWorkingTreeTests
 
         GitWorkingTree.Discover("/repo/src/main.cs", storage)!.RootDirectory.Should().Be(Path.GetFullPath("/repo"));
         GitWorkingTree.Discover("/repo/src/new.cs", storage)!.RootDirectory.Should().Be(Path.GetFullPath("/repo"));
-        GitWorkingTree.Discover("/repo/nested/deep", storage)!.RootDirectory.Should().Be(Path.GetFullPath("/repo/nested"));
+
+        GitWorkingTree.Discover("/repo/nested/deep", storage)!.RootDirectory.Should().Be(
+            Path.GetFullPath("/repo/nested"));
+
         GitWorkingTree.Discover("/elsewhere/file.cs", storage).Should().BeNull();
     }
 
@@ -336,11 +345,17 @@ public class GitWorkingTreeTests
         tree.IsTracked("tracked.cs").Should().BeTrue();
         tree.IsIgnored("file.cs").Should().BeTrue();
         tree.IsIgnored("file.global").Should().BeTrue();
-        var overridden = GitWorkingTree.Open("/repo", storage, new GitWorkingTreeOptions
-        {
-            IgnoreCase = false,
-            GlobalExcludesFilePath = ""
-        });
+
+        var overridden =
+            GitWorkingTree.Open(
+                "/repo",
+                storage,
+                new GitWorkingTreeOptions
+                {
+                    IgnoreCase = false,
+                    GlobalExcludesFilePath = ""
+                });
+
         overridden.IsTracked("tracked.cs").Should().BeFalse();
         overridden.IsIgnored("file.cs").Should().BeFalse();
         overridden.IsIgnored("file.global").Should().BeFalse();
@@ -380,14 +395,20 @@ public class GitWorkingTreeTests
         const string Content = "\uFEFF*.tmp\r\n";
         storage.AddFile("/repo/.gitignore", Content);
         string? observed = null;
-        var tree = GitWorkingTree.Open("/repo", storage, new GitWorkingTreeOptions
-        {
-            ParseIgnoreFile = content =>
-            {
-                observed = content;
-                return GitIgnoreFile.Parse(content);
-            }
-        });
+
+        var tree =
+            GitWorkingTree.Open(
+                "/repo",
+                storage,
+                new GitWorkingTreeOptions
+                {
+                    ParseIgnoreFile =
+                    content =>
+                    {
+                        observed = content;
+                        return GitIgnoreFile.Parse(content);
+                    }
+                });
 
         tree.IsIgnored("file.tmp").Should().BeTrue();
         observed.Should().Be(Content);
@@ -561,9 +582,13 @@ public class GitWorkingTreeTests
     private sealed class MemoryFileSystem : IGitFileSystem
     {
         private readonly Dictionary<string, GitFileSystemEntryKind> _kinds = new(StringComparer.Ordinal);
+
         private readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
+
         public Dictionary<string, string> Environment { get; } = new(StringComparer.Ordinal);
+
         public List<string> Reads { get; } = [];
+
         public string? ReadError { get; set; }
 
         public void AddFile(string path, string content)
