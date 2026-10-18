@@ -519,6 +519,7 @@ public class GitWorkingTreeTests
         var pattern = gitDirectory[..gitDirectory.LastIndexOf('/')] + "/" + suffix;
         var conditionKind = ignoreCase ? "gitdir/i:" : "gitdir:";
         storage.AddFile(Path.Combine(root, ".git", "extra"), "[core]\nignoreCase = true\n");
+
         storage.AddFile(
             Path.Combine(root, ".git", "config"),
             "[includeIf \"" + conditionKind + pattern + "\"]\npath = extra\n");
@@ -544,6 +545,7 @@ public class GitWorkingTreeTests
         var storage = CreateStorage();
         var gitDirectory = Path.GetFullPath(Path.Combine(root, ".git")).Replace(Path.DirectorySeparatorChar, '/');
         storage.AddFile(Path.Combine(root, ".git", "extra"), "[core]\nignoreCase = true\n");
+
         storage.AddFile(
             Path.Combine(root, ".git", "config"),
             "[includeIf \"gitdir:" + gitDirectory.Replace("C:", "D:", StringComparison.Ordinal) + "\"]\npath = extra\n");
@@ -561,6 +563,7 @@ public class GitWorkingTreeTests
         var root = prefix + "server/share/repo";
         var storage = CreateStorage();
         storage.AddFile(Path.Combine(root, ".git", "extra"), "[core]\nignoreCase = true\n");
+
         storage.AddFile(
             Path.Combine(root, ".git", "config"),
             "[includeIf \"gitdir:" + prefix + server + "/" + share + "/repo/.git\"]\npath = extra\n");
