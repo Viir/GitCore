@@ -167,6 +167,61 @@ Call `RefreshIndex()` after staging changes, or open a new instance.
 Ignore files are read on each query, and unchanged contents reuse their parsed form.
 Instances are not intended for concurrent use. Bare repositories are not working trees.
 
+### Index checksum policy
+
+Git normally stores a checksum at the end of its staging-area index. It also supports
+intentionally omitting that checksum to speed up writes: `index.skipHash=true` writes
+an all-zero checksum field instead. `feature.manyFiles=true` enables this setting by
+default unless explicitly overridden. An all-zero field therefore does not necessarily
+mean the index is corrupt.
+
+GitCore makes acceptance of this format an explicit application choice:
+
+| `GitIndexChecksumPolicy` | Behavior |
+| --- | --- |
+| `RequireChecksum` (default) | Requires a nonzero checksum matching the index contents; rejects an omitted checksum. |
+| `ValidateIfPresent` | Accepts Git's all-zero omission marker; verifies every nonzero checksum. |
+
+Both policies validate the index structure and reject nonzero checksum mismatches.
+`ValidateIfPresent` cannot detect content corruption through a checksum when the writer
+omitted it. The checksum field must still be present and contain all zero bytes;
+truncated fields or arbitrary incorrect checksums are not accepted.
+
+For tools that need to read indexes written with checksum omission, opt in when opening
+or discovering the working tree:
+
+```csharp
+var workingTree =
+    GitCore.GitWorkingTree.Discover(
+        filePath,
+        options: new GitCore.GitWorkingTreeOptions
+        {
+            IndexChecksumPolicy = GitCore.GitIndexChecksumPolicy.ValidateIfPresent
+        });
+```
+
+The chosen policy is exposed as `workingTree.IndexChecksumPolicy` and applies to
+`ReadIndex()`, `IsTracked()`, `ShouldIncludeFile()`, and snapshots read after
+`RefreshIndex()`. Ignore-only queries do not read the index.
+
+For standalone parsing, choose the same policy explicitly:
+
+```csharp
+var index =
+    GitCore.GitIndex.Parse(
+        indexBytes,
+        checksumPolicy: GitCore.GitIndexChecksumPolicy.ValidateIfPresent);
+```
+
+`Parse` takes `checksumPolicy` before the optional `readSharedIndex` resolver; callers
+supplying a resolver can use the `readSharedIndex:` named argument.
+Neither API derives its policy from Git configuration: the current settings need not
+match the settings that produced an existing index. Under the strict default, an
+omitted-checksum error explains Git's omission mode and how to select `ValidateIfPresent`.
+
+Shared indexes referenced by a split index must always contain a valid checksum matching
+their reference. Neither policy relaxes this identity requirement.
+
 ### Parse and cache individual gitignore files
 
 ```csharp
@@ -201,7 +256,7 @@ var workingTree = GitCore.GitWorkingTree.Open(repoRootDir, options: options);
 
 `ReadIndex()` exposes the immutable staging-area snapshot and entry metadata.
 `GitIndex.Parse(bytes)` also parses an index without a repository or filesystem.
-The index reader validates checksums and accepts versions 2, 3 and 4; unsupported
+The index reader applies the checksum policy described above and accepts versions 2, 3 and 4; unsupported
 mandatory extensions fail explicitly rather than treating tracked files as untracked.
 Split indexes are resolved through the injected filesystem (`GitIndex.Parse` accepts
 a shared-index resolver). SHA-1 and SHA-256 indexes are supported. Sparse-directory

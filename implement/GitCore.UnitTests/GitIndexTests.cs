@@ -102,6 +102,156 @@ public class GitIndexTests
     }
 
     [Theory]
+    [InlineData(2, 20)]
+    [InlineData(3, 20)]
+    [InlineData(4, 20)]
+    [InlineData(2, 32)]
+    [InlineData(3, 32)]
+    [InlineData(4, 32)]
+    public void Index_checksum_policies_validate_every_nonzero_checksum(int version, int objectIdLength)
+    {
+        foreach (var policy in Enum.GetValues<GitIndexChecksumPolicy>())
+        {
+            var bytes = BuildIndex(version, [new("file")], objectIdLength: objectIdLength);
+            GitIndex.Parse(bytes, objectIdLength, policy).IsTracked("file").Should().BeTrue();
+
+            bytes[12] ^= 1;
+
+            Throws<InvalidDataException>(() => GitIndex.Parse(bytes, objectIdLength, policy))
+                .Message.Should().Be("Git index checksum does not match its content.");
+
+            bytes[12] ^= 1;
+
+            bytes[^1] ^= 1;
+
+            Throws<InvalidDataException>(() => GitIndex.Parse(bytes, objectIdLength, policy))
+                .Message.Should().Be("Git index checksum does not match its content.");
+
+            bytes.AsSpan(bytes.Length - objectIdLength).Clear();
+            bytes[^1] = 1;
+
+            Throws<InvalidDataException>(() => GitIndex.Parse(bytes, objectIdLength, policy))
+                .Message.Should().Be("Git index checksum does not match its content.");
+        }
+    }
+
+    [Theory]
+    [InlineData(2, 20)]
+    [InlineData(3, 20)]
+    [InlineData(4, 20)]
+    [InlineData(2, 32)]
+    [InlineData(3, 32)]
+    [InlineData(4, 32)]
+    public void Index_requires_explicit_policy_for_omitted_checksums(int version, int objectIdLength)
+    {
+        var bytes =
+            OmitChecksum(
+                BuildIndex(version, [new("file")], [("TEST", new byte[] { 1, 2, 3 })], objectIdLength),
+                objectIdLength);
+
+        var error = Throws<InvalidDataException>(() => GitIndex.Parse(bytes, objectIdLength));
+        error.Message.Should().Contain("checksum is omitted");
+        error.Message.Should().Contain("all-zero checksum field");
+        error.Message.Should().Contain("index.skipHash");
+        error.Message.Should().Contain("feature.manyFiles");
+        error.Message.Should().Contain("checksumPolicy: GitIndexChecksumPolicy.ValidateIfPresent");
+        error.Message.Should().Contain("GitWorkingTreeOptions.IndexChecksumPolicy");
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(bytes, objectIdLength, GitIndexChecksumPolicy.RequireChecksum))
+            .Message.Should().Be(error.Message);
+
+        var index = GitIndex.Parse(bytes, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent);
+        index.IsTracked("file").Should().BeTrue();
+        index.Entries.Should().ContainSingle();
+        index.Entries[0].ObjectId.Should().Be(new string('1', objectIdLength * 2));
+
+        var empty = OmitChecksum(BuildIndex(version, [], objectIdLength: objectIdLength), objectIdLength);
+        GitIndex.Parse(empty, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent).Entries.Should().BeEmpty();
+        Throws<InvalidDataException>(() => GitIndex.Parse(empty, objectIdLength));
+    }
+
+    [Theory]
+    [InlineData(20)]
+    [InlineData(32)]
+    public void Index_validate_if_present_preserves_structure_validation(int objectIdLength)
+    {
+        var valid = OmitChecksum(BuildIndex(4, [new("file")], objectIdLength: objectIdLength), objectIdLength);
+
+        for (var length = 0; length < 12 + objectIdLength; length++)
+        {
+            var truncated = new byte[length];
+
+            Throws<InvalidDataException>(
+                () => GitIndex.Parse(truncated, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+        }
+
+        var badSignature = (byte[])valid.Clone();
+        badSignature[0] = (byte)'X';
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(badSignature, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+
+        var badVersion = (byte[])valid.Clone();
+        BinaryPrimitives.WriteUInt32BigEndian(badVersion.AsSpan(4, 4), 5);
+
+        Throws<NotSupportedException>(
+            () => GitIndex.Parse(badVersion, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+
+        var badCount = (byte[])valid.Clone();
+        BinaryPrimitives.WriteUInt32BigEndian(badCount.AsSpan(8, 4), uint.MaxValue);
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(badCount, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+
+        byte[] truncatedEntry = [.. valid.AsSpan(0, valid.Length - objectIdLength - 1), .. new byte[objectIdLength]];
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(truncatedEntry, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+
+        var invalidEntries =
+            new FixtureEntry[][]
+            {
+                [new("file", Mode: 0)],
+                [new("z"), new("a")],
+                [new("file", V4Prefix: [1])],
+                [new("file", RawPath: [0xc0, 0xaf])],
+            };
+
+        foreach (var entries in invalidEntries)
+        {
+            var malformed = OmitChecksum(BuildIndex(4, entries, objectIdLength: objectIdLength), objectIdLength);
+
+            Throws<InvalidDataException>(
+                () => GitIndex.Parse(malformed, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+        }
+
+        var unsupported =
+            OmitChecksum(BuildIndex(4, [], [("abcd", Array.Empty<byte>())], objectIdLength), objectIdLength);
+
+        Throws<NotSupportedException>(
+            () => GitIndex.Parse(unsupported, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+
+        var oversized =
+            OmitChecksum(BuildIndex(4, [], [("TEST", Array.Empty<byte>())], objectIdLength), objectIdLength);
+
+        BinaryPrimitives.WriteUInt32BigEndian(oversized.AsSpan(16, 4), uint.MaxValue);
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(oversized, objectIdLength, GitIndexChecksumPolicy.ValidateIfPresent));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(2)]
+    public void Index_rejects_undefined_checksum_policies(int value)
+    {
+        Throws<ArgumentOutOfRangeException>(
+            () => GitIndex.Parse(BuildIndex(2, []), checksumPolicy: (GitIndexChecksumPolicy)value))
+            .ParamName.Should().Be("checksumPolicy");
+    }
+
+    [Theory]
     [InlineData(2)]
     [InlineData(3)]
     [InlineData(4)]
@@ -352,11 +502,18 @@ public class GitIndexTests
     }
 
     [Theory]
-    [InlineData(2, 20)]
-    [InlineData(3, 20)]
-    [InlineData(4, 20)]
-    [InlineData(4, 32)]
-    public void Index_merges_split_index_delete_replace_and_new_entries(int version, int objectIdLength)
+    [InlineData(2, 20, false)]
+    [InlineData(3, 20, false)]
+    [InlineData(4, 20, false)]
+    [InlineData(4, 32, false)]
+    [InlineData(2, 20, true)]
+    [InlineData(3, 20, true)]
+    [InlineData(4, 20, true)]
+    [InlineData(4, 32, true)]
+    public void Index_merges_split_index_delete_replace_and_new_entries(
+        int version,
+        int objectIdLength,
+        bool omitChecksum)
     {
         var shared =
             BuildIndex(
@@ -388,12 +545,22 @@ public class GitIndexTests
                 [("link", link)],
                 objectIdLength);
 
+        if (omitChecksum)
+        {
+            OmitChecksum(split, objectIdLength);
+
+            Throws<InvalidDataException>(() => GitIndex.Parse(split, objectIdLength, readSharedIndex: _ => shared))
+                .Message.Should().Contain("checksumPolicy: GitIndexChecksumPolicy.ValidateIfPresent");
+        }
+
         var resolverCalls = 0;
 
         var index =
             GitIndex.Parse(
                 split,
                 objectIdLength,
+                omitChecksum ? GitIndexChecksumPolicy.ValidateIfPresent : GitIndexChecksumPolicy.RequireChecksum,
+                readSharedIndex:
                 checksum =>
                 {
                     resolverCalls++;
@@ -408,6 +575,40 @@ public class GitIndexTests
         index.Entries[2].AssumeValid.Should().BeTrue();
         index.Entries[2].ObjectId.Should().Be(new string('2', objectIdLength * 2));
         index.Entries[3].Stage.Should().Be(2);
+    }
+
+    [Theory]
+    [InlineData(20, GitIndexChecksumPolicy.RequireChecksum)]
+    [InlineData(32, GitIndexChecksumPolicy.RequireChecksum)]
+    [InlineData(20, GitIndexChecksumPolicy.ValidateIfPresent)]
+    [InlineData(32, GitIndexChecksumPolicy.ValidateIfPresent)]
+    public void Index_checksum_policy_never_relaxes_shared_index_integrity(
+        int objectIdLength,
+        GitIndexChecksumPolicy policy)
+    {
+        var shared = BuildIndex(4, [new("a")], objectIdLength: objectIdLength);
+        var split = BuildIndex(4, [], [("link", shared[^objectIdLength..])], objectIdLength);
+        var omittedShared = OmitChecksum((byte[])shared.Clone(), objectIdLength);
+
+        var error =
+            Throws<InvalidDataException>(
+                () => GitIndex.Parse(split, objectIdLength, policy, readSharedIndex: _ => omittedShared));
+
+        error.Message.Should().Contain("Shared Git index checksum is omitted");
+        error.Message.Should().Contain("even under GitIndexChecksumPolicy.ValidateIfPresent");
+        error.Message.Should().NotContain("To allow omission");
+
+        var corruptedShared = (byte[])shared.Clone();
+        corruptedShared[12] ^= 1;
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(split, objectIdLength, policy, readSharedIndex: _ => corruptedShared));
+
+        var differentShared = BuildIndex(4, [new("b")], objectIdLength: objectIdLength);
+
+        Throws<InvalidDataException>(
+            () => GitIndex.Parse(split, objectIdLength, policy, readSharedIndex: _ => differentShared))
+            .Message.Should().Be("Shared Git index checksum differs from the split-index link.");
     }
 
     [Fact]
@@ -629,6 +830,12 @@ public class GitIndexTests
 
     private static byte[] AppendChecksum(byte[] content, int objectIdLength) =>
         [.. content, .. objectIdLength == 20 ? SHA1.HashData(content) : SHA256.HashData(content)];
+
+    private static byte[] OmitChecksum(byte[] content, int objectIdLength = 20)
+    {
+        content.AsSpan(content.Length - objectIdLength).Clear();
+        return content;
+    }
 
     private static void Rehash(byte[] content, int objectIdLength = 20)
     {

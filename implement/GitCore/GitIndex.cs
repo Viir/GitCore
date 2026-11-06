@@ -9,6 +9,29 @@ using System.Text;
 namespace GitCore;
 
 /// <summary>
+/// Controls whether a Git staging-area index may omit its checksum.
+/// Git can write an all-zero checksum field instead of calculating a checksum when
+/// index.skipHash is enabled, including through feature.manyFiles.
+/// Both policies validate nonzero checksums and the index structure.
+/// Shared indexes must always contain a valid checksum matching their split-index reference.
+/// </summary>
+public enum GitIndexChecksumPolicy
+{
+    /// <summary>
+    /// Requires a nonzero checksum matching the index contents. This is the default.
+    /// Rejects Git's all-zero marker for an omitted checksum.
+    /// </summary>
+    RequireChecksum,
+
+    /// <summary>
+    /// Accepts Git's all-zero marker for an omitted checksum; otherwise verifies the checksum.
+    /// Structural validation still applies, but content corruption cannot be detected by a checksum
+    /// when the writer omitted it. Does not relax shared-index identity validation.
+    /// </summary>
+    ValidateIfPresent
+}
+
+/// <summary>
 /// An immutable snapshot of a Git staging-area index, including all conflict stages.
 /// </summary>
 public sealed class GitIndex
@@ -43,20 +66,34 @@ public sealed class GitIndex
     public static GitIndex Empty { get; } = new([]);
 
     /// <summary>
-    /// Parses index versions 2, 3, and 4, validating their checksum and structure.
+    /// Parses index versions 2, 3, and 4, validating their structure and applying the checksum policy.
     /// Split indexes are supported when a shared-index resolver is supplied.
     /// Sparse-directory entries are retained without expanding their trees.
     /// </summary>
-    /// <param name="content">The complete index, including its trailing checksum.</param>
+    /// <param name="content">
+    /// The complete index, including its trailing checksum field even when that field is all zero.
+    /// </param>
     /// <param name="objectIdLength">20 for SHA-1 repositories, or 32 for SHA-256 repositories.</param>
+    /// <param name="checksumPolicy">
+    /// Defaults to <see cref="GitIndexChecksumPolicy.RequireChecksum"/>.
+    /// Git can omit checksums by writing an all-zero field when index.skipHash is enabled,
+    /// including through feature.manyFiles. Use <see cref="GitIndexChecksumPolicy.ValidateIfPresent"/>
+    /// to accept that marker while still verifying every nonzero checksum.
+    /// This policy is independent of the repository's current configuration.
+    /// </param>
     /// <param name="readSharedIndex">
     /// Resolves a shared index by its lowercase hexadecimal checksum (without the sharedindex. prefix).
+    /// Shared indexes must contain a valid checksum matching this identifier under either policy.
     /// </param>
-    /// <exception cref="InvalidDataException">The index or shared index is corrupt.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The object identifier length or checksum policy is unsupported.</exception>
+    /// <exception cref="InvalidDataException">
+    /// The index or shared index is corrupt, or a required checksum was omitted.
+    /// </exception>
     /// <exception cref="NotSupportedException">The index requires an unsupported version, extension, or unavailable shared index.</exception>
     public static GitIndex Parse(
         ReadOnlyMemory<byte> content,
         int objectIdLength = 20,
+        GitIndexChecksumPolicy checksumPolicy = GitIndexChecksumPolicy.RequireChecksum,
         Func<string, ReadOnlyMemory<byte>>? readSharedIndex = null)
     {
         if (objectIdLength is not (20 or 32))
@@ -66,7 +103,20 @@ public sealed class GitIndex
                 "Git object identifiers must contain 20 or 32 bytes.");
         }
 
-        return new GitIndex(ParseEntries(content, objectIdLength, readSharedIndex, isShared: false));
+        ValidateChecksumPolicy(checksumPolicy);
+
+        return new GitIndex(ParseEntries(content, objectIdLength, checksumPolicy, readSharedIndex, isShared: false));
+    }
+
+    internal static void ValidateChecksumPolicy(GitIndexChecksumPolicy checksumPolicy)
+    {
+        if (!Enum.IsDefined(checksumPolicy))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(checksumPolicy),
+                checksumPolicy,
+                "Unsupported Git index checksum policy.");
+        }
     }
 
     /// <summary>
@@ -99,6 +149,7 @@ public sealed class GitIndex
     private static List<GitIndexEntry> ParseEntries(
         ReadOnlyMemory<byte> content,
         int objectIdLength,
+        GitIndexChecksumPolicy checksumPolicy,
         Func<string, ReadOnlyMemory<byte>>? readSharedIndex,
         bool isShared)
     {
@@ -111,12 +162,34 @@ public sealed class GitIndex
             throw new InvalidDataException("Invalid Git index signature.");
 
         var checksumOffset = span.Length - objectIdLength;
+        var storedChecksum = span[checksumOffset..];
 
-        var checksum =
-            objectIdLength == 20 ? SHA1.HashData(span[..checksumOffset]) : SHA256.HashData(span[..checksumOffset]);
+        if (storedChecksum.IndexOfAnyExcept((byte)0) < 0)
+        {
+            if (checksumPolicy is GitIndexChecksumPolicy.RequireChecksum)
+            {
+                throw new InvalidDataException(
+                    isShared
+                    ?
+                    "Shared Git index checksum is omitted (all-zero checksum field). " +
+                    "Shared indexes must contain a valid checksum matching their split-index reference, " +
+                    "even under GitIndexChecksumPolicy.ValidateIfPresent."
+                    :
+                    "Git index checksum is omitted (all-zero checksum field). " +
+                    "Git can omit index checksums when index.skipHash is enabled, including through feature.manyFiles. " +
+                    "To allow omission while still validating nonzero checksums, pass " +
+                    "checksumPolicy: GitIndexChecksumPolicy.ValidateIfPresent to GitIndex.Parse, or set " +
+                    "GitWorkingTreeOptions.IndexChecksumPolicy to GitIndexChecksumPolicy.ValidateIfPresent.");
+            }
+        }
+        else
+        {
+            var checksum =
+                objectIdLength == 20 ? SHA1.HashData(span[..checksumOffset]) : SHA256.HashData(span[..checksumOffset]);
 
-        if (!span[checksumOffset..].SequenceEqual(checksum))
-            throw new InvalidDataException("Git index checksum does not match its content.");
+            if (!storedChecksum.SequenceEqual(checksum))
+                throw new InvalidDataException("Git index checksum does not match its content.");
+        }
 
         var version = BinaryPrimitives.ReadUInt32BigEndian(span.Slice(4, 4));
 
@@ -285,7 +358,14 @@ public sealed class GitIndex
                 throw new NotSupportedException($"Split Git index requires a resolver for shared index '{sharedId}'.");
 
             var shared = readSharedIndex(sharedId);
-            sharedEntries = ParseEntries(shared, objectIdLength, readSharedIndex: null, isShared: true);
+
+            sharedEntries =
+                ParseEntries(
+                    shared,
+                    objectIdLength,
+                    GitIndexChecksumPolicy.RequireChecksum,
+                    readSharedIndex: null,
+                    isShared: true);
 
             if (!shared.Span[^objectIdLength..].SequenceEqual(sharedIdBytes))
                 throw new InvalidDataException("Shared Git index checksum differs from the split-index link.");

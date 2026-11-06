@@ -83,6 +83,102 @@ public class GitWorkingTreeTests
     }
 
     [Theory]
+    [InlineData("")]
+    [InlineData("[index]\nskipHash = true\n")]
+    [InlineData("[feature]\nmanyFiles = true\n")]
+    public void Working_tree_requires_checksums_by_default_regardless_of_git_configuration(string configuration)
+    {
+        var storage = CreateStorage();
+        storage.AddFile("/repo/.git/config", configuration);
+        var bytes = BuildIndex("tracked.cs");
+        bytes.AsSpan(bytes.Length - 20).Clear();
+        storage.AddFile("/repo/.git/index", bytes);
+        storage.AddFile("/repo/tracked.cs", "");
+
+        var tree = GitWorkingTree.Discover("/repo/tracked.cs", storage)!;
+        tree.IndexChecksumPolicy.Should().Be(GitIndexChecksumPolicy.RequireChecksum);
+        new GitWorkingTreeOptions().IndexChecksumPolicy.Should().Be(GitIndexChecksumPolicy.RequireChecksum);
+        tree.IsIgnored("tracked.cs").Should().BeFalse();
+
+        Action read = () => tree.ReadIndex();
+        Action tracked = () => tree.IsTracked("tracked.cs");
+        Action included = () => tree.ShouldIncludeFile("tracked.cs");
+
+        foreach (var query in new[] { read, tracked, included })
+        {
+            query.Should().ThrowExactly<InvalidDataException>()
+                .Which.Message.Should().Contain(
+                "GitWorkingTreeOptions.IndexChecksumPolicy to GitIndexChecksumPolicy.ValidateIfPresent");
+        }
+    }
+
+    [Theory]
+    [InlineData(false, 20)]
+    [InlineData(true, 20)]
+    [InlineData(false, 32)]
+    [InlineData(true, 32)]
+    public void Working_tree_applies_checksum_policy_to_discovery_queries_and_refreshed_snapshots(
+        bool linkedWorktree,
+        int objectIdLength)
+    {
+        var storage = CreateStorage();
+        var root = linkedWorktree ? "/linked" : "/repo";
+        var gitDirectory = linkedWorktree ? "/repo/.git/worktrees/linked" : "/repo/.git";
+
+        if (linkedWorktree)
+        {
+            storage.AddFile("/linked/.git", "gitdir: ../repo/.git/worktrees/linked\n");
+            storage.AddFile(gitDirectory + "/commondir", "../..\n");
+        }
+
+        if (objectIdLength == 32)
+            storage.AddFile("/repo/.git/config", "[extensions]\nobjectFormat = sha256\n");
+
+        storage.AddFile(root + "/.gitignore", "*.cs\n");
+        storage.AddFile(root + "/tracked.cs", "");
+        var bytes = BuildIndexEntries([("tracked.cs", 0x81a4u)], objectIdLength);
+        bytes.AsSpan(bytes.Length - objectIdLength).Clear();
+        storage.AddFile(gitDirectory + "/index", bytes);
+        var options = new GitWorkingTreeOptions { IndexChecksumPolicy = GitIndexChecksumPolicy.ValidateIfPresent };
+
+        var tree = GitWorkingTree.Discover(root + "/tracked.cs", storage, options)!;
+        tree.IndexChecksumPolicy.Should().Be(GitIndexChecksumPolicy.ValidateIfPresent);
+        tree.ReadIndex().Entries.Should().ContainSingle();
+        tree.IsTracked("tracked.cs").Should().BeTrue();
+        tree.IsIgnored("tracked.cs").Should().BeTrue();
+        tree.ShouldIncludeFile("tracked.cs").Should().BeTrue();
+        tree.IsTracked("untracked.cs").Should().BeFalse();
+        GitWorkingTree.Open(root, storage, options).IsTracked("tracked.cs").Should().BeTrue();
+
+        var updated = BuildIndexEntries([("added.cs", 0x81a4u)], objectIdLength);
+        updated.AsSpan(updated.Length - objectIdLength).Clear();
+        storage.AddFile(gitDirectory + "/index", updated);
+        tree.IsTracked("added.cs").Should().BeFalse();
+        tree.RefreshIndex();
+        tree.IsTracked("added.cs").Should().BeTrue();
+        tree.IsTracked("tracked.cs").Should().BeFalse();
+
+        updated[^1] = 1;
+        tree.RefreshIndex();
+        Action corrupt = () => tree.ReadIndex();
+
+        corrupt.Should().ThrowExactly<InvalidDataException>()
+            .Which.Message.Should().Be("Git index checksum does not match its content.");
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(2)]
+    public void Working_tree_rejects_undefined_checksum_policies_before_reading_an_index(int value)
+    {
+        var storage = CreateStorage();
+        var options = new GitWorkingTreeOptions { IndexChecksumPolicy = (GitIndexChecksumPolicy)value };
+        Action open = () => GitWorkingTree.Open("/repo", storage, options);
+        open.Should().ThrowExactly<ArgumentOutOfRangeException>();
+        storage.Reads.Should().NotContain(Path.GetFullPath("/repo/.git/index"));
+    }
+
+    [Theory]
     [InlineData("root.log", true)]
     [InlineData("keep.log", false)]
     [InlineData("src/local.log", true)]
@@ -254,17 +350,27 @@ public class GitWorkingTreeTests
         tree.IsIgnored("generated.tmp").Should().BeTrue();
     }
 
-    [Fact]
-    public void Working_tree_resolves_split_index_bases_through_the_injected_filesystem()
+    [Theory]
+    [InlineData(GitIndexChecksumPolicy.RequireChecksum, false)]
+    [InlineData(GitIndexChecksumPolicy.ValidateIfPresent, false)]
+    [InlineData(GitIndexChecksumPolicy.ValidateIfPresent, true)]
+    public void Working_tree_resolves_split_index_bases_through_the_injected_filesystem(
+        GitIndexChecksumPolicy policy,
+        bool omitChecksum)
     {
         var storage = CreateStorage();
         var shared = BuildIndex("linked.cs");
         var checksum = Convert.ToHexStringLower(shared.AsSpan(shared.Length - 20));
         storage.AddFile("/linked/.git", "gitdir: ../repo/.git/worktrees/linked\n");
         storage.AddFile("/repo/.git/worktrees/linked/commondir", "../..\n");
-        storage.AddFile("/repo/.git/worktrees/linked/index", BuildSplitIndex(shared));
+        var split = BuildSplitIndex(shared);
+
+        if (omitChecksum)
+            split.AsSpan(split.Length - 20).Clear();
+
+        storage.AddFile("/repo/.git/worktrees/linked/index", split);
         storage.AddFile("/repo/.git/sharedindex." + checksum, shared);
-        var tree = GitWorkingTree.Open("/linked", storage);
+        var tree = GitWorkingTree.Open("/linked", storage, new GitWorkingTreeOptions { IndexChecksumPolicy = policy });
 
         tree.IsTracked("linked.cs").Should().BeTrue();
         storage.Reads.Should().Contain(Path.GetFullPath("/repo/.git/sharedindex." + checksum));

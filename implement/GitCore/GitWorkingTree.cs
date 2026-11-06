@@ -27,6 +27,16 @@ public sealed class GitWorkingTreeOptions
     /// not the host operating system's case sensitivity.
     /// </summary>
     public bool? IgnoreCase { get; init; }
+
+    /// <summary>
+    /// Gets the checksum policy for index snapshots, defaulting to
+    /// <see cref="GitIndexChecksumPolicy.RequireChecksum"/>.
+    /// Git can omit an index checksum by writing an all-zero field when index.skipHash is enabled,
+    /// including through feature.manyFiles. Use <see cref="GitIndexChecksumPolicy.ValidateIfPresent"/>
+    /// to accept such indexes while still verifying nonzero checksums and validating their structure.
+    /// This choice is independent of Git configuration. Shared-index checksums remain required.
+    /// </summary>
+    public GitIndexChecksumPolicy IndexChecksumPolicy { get; init; } = GitIndexChecksumPolicy.RequireChecksum;
 }
 
 /// <summary>
@@ -61,9 +71,12 @@ public sealed class GitWorkingTree
         IGitFileSystem fileSystem,
         GitWorkingTreeOptions options)
     {
+        GitIndex.ValidateChecksumPolicy(options.IndexChecksumPolicy);
+
         RootDirectory = rootDirectory;
         GitDirectory = gitDirectory;
         CommonGitDirectory = commonGitDirectory;
+        IndexChecksumPolicy = options.IndexChecksumPolicy;
         _fileSystem = fileSystem;
         _parseIgnoreFile = options.ParseIgnoreFile ?? GitIgnoreFile.Parse;
 
@@ -93,9 +106,22 @@ public sealed class GitWorkingTree
     public bool IgnoreCase { get; }
 
     /// <summary>
+    /// Gets the checksum policy used by <see cref="ReadIndex"/> and queries that read the index.
+    /// <see cref="GitIndexChecksumPolicy.RequireChecksum"/> rejects Git's all-zero omitted-checksum marker;
+    /// <see cref="GitIndexChecksumPolicy.ValidateIfPresent"/> accepts it while verifying nonzero checksums.
+    /// </summary>
+    public GitIndexChecksumPolicy IndexChecksumPolicy { get; }
+
+    /// <summary>
     /// Opens a working-tree root containing a .git directory or gitdir file.
     /// Bare repositories do not have formatting candidates and are not accepted.
     /// </summary>
+    /// <remarks>
+    /// The index is read lazily under <see cref="GitWorkingTreeOptions.IndexChecksumPolicy"/>,
+    /// which defaults to <see cref="GitIndexChecksumPolicy.RequireChecksum"/>.
+    /// Git's optional checksum omission must be allowed explicitly using
+    /// <see cref="GitIndexChecksumPolicy.ValidateIfPresent"/>.
+    /// </remarks>
     public static GitWorkingTree Open(
         string rootDirectory,
         IGitFileSystem? fileSystem = null,
@@ -144,6 +170,9 @@ public sealed class GitWorkingTree
     /// Returns null outside a working tree. A malformed .git entry is an error, not a reason to
     /// continue searching an enclosing repository.
     /// </summary>
+    /// <remarks>
+    /// Applies the supplied options as <see cref="Open"/> does, including the strict default checksum policy.
+    /// </remarks>
     public static GitWorkingTree? Discover(
         string path,
         IGitFileSystem? fileSystem = null,
@@ -172,6 +201,15 @@ public sealed class GitWorkingTree
     /// Tracking is based on the index, not HEAD: staged additions and conflicts are tracked,
     /// while staged removals are not.
     /// </summary>
+    /// <remarks>
+    /// Applies <see cref="IndexChecksumPolicy"/> to every newly read snapshot.
+    /// Git can intentionally omit an index checksum by writing an all-zero field;
+    /// <see cref="GitIndexChecksumPolicy.RequireChecksum"/> rejects such snapshots.
+    /// Shared indexes always require a valid checksum matching their split-index reference.
+    /// </remarks>
+    /// <exception cref="InvalidDataException">
+    /// The index is corrupt, a required checksum was omitted, or a shared index is missing or invalid.
+    /// </exception>
     public GitIndex ReadIndex()
     {
         if (_index is not null)
@@ -187,6 +225,8 @@ public sealed class GitWorkingTree
             GitIndex.Parse(
                 bytes,
                 _objectIdLength,
+                IndexChecksumPolicy,
+                readSharedIndex:
                 checksum =>
                 _fileSystem.ReadAllBytes(Path.Combine(GitDirectory, "sharedindex." + checksum))
                 ?? (GitDirectory == CommonGitDirectory
@@ -219,6 +259,7 @@ public sealed class GitWorkingTree
     /// Accepts an absolute native path or a path relative to the working-tree root.
     /// Paths outside the tree are rejected.
     /// </summary>
+    /// <remarks>Reads the index under <see cref="IndexChecksumPolicy"/>; see <see cref="ReadIndex"/>.</remarks>
     public bool IsTracked(string path)
     {
         var relative = GetRelativePath(path);
@@ -284,6 +325,7 @@ public sealed class GitWorkingTree
     /// This is a selection predicate, not a test for content changes or a replacement for git status.
     /// Tracked files remain candidates even when covered by ignore rules.
     /// </summary>
+    /// <remarks>Reads the index under <see cref="IndexChecksumPolicy"/>; see <see cref="ReadIndex"/>.</remarks>
     public bool ShouldIncludeFile(string path)
     {
         var relativePath = GetRelativePath(path);
